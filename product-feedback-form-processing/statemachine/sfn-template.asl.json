@@ -1,0 +1,152 @@
+{
+    "Comment": "A serverless product feedback form processor with a number of useful reference components",
+    "StartAt": "Detect Sentiment",
+    "States": {
+      "Detect Sentiment": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::aws-sdk:comprehend:detectSentiment",
+        "Parameters": {
+          "Text.$": "$.feedback",
+          "LanguageCode": "en"
+        },
+        "ResultPath": "$.SentimentResults",
+        "ResultSelector": {
+          "Sentiment.$": "$.Sentiment",
+          "SentimentScore.$": "$.SentimentScore"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "States.ALL"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 3,
+            "BackoffRate": 2
+          }
+        ],
+        "Next": "Record Feedback With Sentiment"
+      },
+      "Record Feedback With Sentiment": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::dynamodb:putItem",
+        "Parameters": {
+          "TableName": "${DDBTable}",
+          "Item": {
+            "formId": {
+              "S.$": "$$.Execution.Id"
+            },
+            "feedback": {
+              "S.$": "States.JsonToString($.feedback)"
+            },
+            "sentiment": {
+              "S.$": "States.JsonToString($.SentimentResults)"
+            }
+          }
+        },
+        "ResultPath": null,
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "States.TaskFailed"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 3,
+            "BackoffRate": 5
+          }
+        ],
+        "Next": "How was the Feedback?"
+      },
+      "How was the Feedback?": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Variable": "$.SentimentResults.Sentiment",
+            "StringEquals": "NEGATIVE",
+            "Next": "Negative"
+          },
+          {
+            "Variable": "$.SentimentResults.Sentiment",
+            "StringEquals": "POSITIVE",
+            "Next": "Positive"
+          }
+        ],
+        "Default": "Mixed"
+      },
+      "Positive": {
+        "Type": "Succeed",
+        "Comment": "Positive Feedback"
+      },
+      "Mixed": {
+        "Type": "Succeed",
+        "Comment": "Mixed feedback"
+      },
+      "Negative": {
+        "Type": "Pass",
+        "Next": "Create Case To Follow Up"
+      },
+      "Create Case To Follow Up": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "FunctionName": "${CreateCase}:live",
+          "Payload.$": "$"
+        },
+        "ResultPath": "$.Case",
+        "ResultSelector": {
+          "CaseId.$": "$.Payload"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 3,
+            "BackoffRate": 2
+          }
+        ],
+        "Next": "Notify Agent To Follow Up"
+      },
+      "Notify Agent To Follow Up": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::aws-sdk:ses:sendEmail",
+        "Parameters": {
+          "Source": "${SourceEmail}",
+          "ReplyToAddresses": [
+            "${SourceEmail}"
+          ],
+          "Destination": {
+            "ToAddresses": [
+              "${SourceEmail}"
+            ]
+          },
+          "Message": {
+            "Subject": {
+              "Data": "New form submission with negative sentiment - please follow-up!",
+              "Charset": "UTF-8"
+            },
+            "Body": {
+              "Text": {
+                "Data.$": "$",
+                "Charset": "UTF-8"
+              }
+            }
+          }
+        },
+        "ResultPath": null,
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "States.ALL"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 3,
+            "BackoffRate": 2
+          }
+        ],
+        "End": true
+      }
+    }
+  }

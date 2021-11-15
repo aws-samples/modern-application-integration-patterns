@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ...:
+  1) ...
+  2) ...
+  3) ...
+  4) ...
+
+##########################################################################
+#  Parameters & Globals                                                  #
+##########################################################################
+Parameters:
+  TargetLanguage :
+    Type: String
+    Default: 'en'
+
+#Globals:
+
+Resources:
+  ##########################################################################
+  #   S3 BUCKET                                                            #
+  ##########################################################################
+  TranslationS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+
+  ##########################################################################
+  #   CLOUD WATCH LOGS                                                     #
+  ##########################################################################
+  LanguageDetectionAndTranslationStateMachineCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /language-detection-and-translation/step-functions
+      RetentionInDays: 7
+
+  ##########################################################################
+  #   STEP FUNCTION                                                        #
+  ##########################################################################
+  LanguageDetectionAndTranslationStateMachine:
+    Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
+    Properties:
+      Type: STANDARD
+      DefinitionUri: statemachine/sfn-template.asl.json
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt LanguageDetectionAndTranslationStateMachineCloudWatchLogsGroup.Arn
+        IncludeExecutionData: True
+        Level: ALL # ALL | ERROR | FATAL | OFF
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        TargetLanguage: !Ref TargetLanguage
+        TranslationS3Bucket: !Ref TranslationS3Bucket
+      Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
+        - ComprehendBasicAccessPolicy: {}
+        - S3CrudPolicy:
+            BucketName: !Ref TranslationS3Bucket
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - "translate:translateText"
+              Resource: "*"
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: # see https://docs.aws.amazon.com/step-functions/latest/dg/cw-logs.html
+                - "logs:*"
+              Resource: "*"
+
+  ##########################################################################
+  #   REST API                                                             #
+  ##########################################################################
+  RestApiforSyncWF:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: live
+      EndpointConfiguration:
+        Type: REGIONAL
+      TracingEnabled: True
+      DefinitionBody:
+        'Fn::Transform':
+          Name: 'AWS::Include'
+          Parameters:
+            Location: 'api/api.yaml'
+
+  ##########################################################################
+  #   Roles                                                               #
+  ##########################################################################
+  RestApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AllowSFNExecution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                  - states:ListExecutions
+                Resource: !GetAtt LanguageDetectionAndTranslationStateMachine.Arn
+        - PolicyName: AllowSFNExecutionDescribe
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:DescribeExecution
+                  - states:StopExecution
+                Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${LanguageDetectionAndTranslationStateMachine.Name}:*"
+
+##########################################################################
+#   Outputs                                                              #
+##########################################################################
+#Outputs:

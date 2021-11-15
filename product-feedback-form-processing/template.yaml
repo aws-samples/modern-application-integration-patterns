@@ -1,0 +1,162 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Serverless product feedback form handler - it accepts a form submission from a webpage and starts a state machine (workflow), which:
+  1) does an sentiment analysis by using Amazon Comprehend
+  2) saves the feedback data and the sentiment analysis in an Amazon DynamoDB table
+  3) in case it's a negative feedback, it generates a case and
+  4) notifies an agent to follow up with it
+
+##########################################################################
+#  Parameters & Globals                                                  #
+##########################################################################
+Parameters:
+  ValidatedEmail:
+    Type: String
+    Description: (Required) A validated SES email address for receiving new submissions.
+    MaxLength: 70
+    Default: validated@email.com
+    MinLength: 4
+    ConstraintDescription: Required. Must be a SES verified email address.
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 5
+    AutoPublishAlias: live
+    Handler: app.lambda_handler
+    Runtime: python3.8
+    MemorySize: 128
+    Tracing: Active
+
+Resources:
+##########################################################################
+#  Dynamo DB Table                                                      #
+##########################################################################
+  FormDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: formId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: formId
+        KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+##########################################################################
+#  Lambda functions                                                      #
+##########################################################################
+  CreateCase:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: functions/create-case/
+
+##########################################################################
+#   CLOUD WATCH LOGS                                                     #
+##########################################################################
+  ProductFeedbackFormStateMachineCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /product-feedback-form-processing/step-functions
+      RetentionInDays: 7
+
+##########################################################################
+#   STEP FUNCTION                                                        #
+##########################################################################
+  ProductFeedbackFormStateMachineExpressSync:
+    Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
+    Properties:
+      Type: EXPRESS
+      DefinitionUri: statemachine/sfn-template.asl.json
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt ProductFeedbackFormStateMachineCloudWatchLogsGroup.Arn
+        IncludeExecutionData: True
+        Level: ALL # ALL | ERROR | FATAL | OFF
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        CreateCase: !Ref CreateCase
+        DDBTable: !Ref FormDataTable
+        SourceEmail: !Ref ValidatedEmail
+      Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
+        - ComprehendBasicAccessPolicy: {}
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CreateCase
+        - DynamoDBWritePolicy:
+            TableName: !Ref FormDataTable
+        - SESCrudPolicy:
+            IdentityName: !Ref ValidatedEmail
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: # see https://docs.aws.amazon.com/step-functions/latest/dg/cw-logs.html
+                - logs:CreateLogStream
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - logs:PutLogEvents
+              Resource: "*"
+
+##########################################################################
+#   REST API                                                             #
+##########################################################################
+  RestApiforSyncWF:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: live
+      EndpointConfiguration:
+        Type: REGIONAL
+      TracingEnabled: True
+      DefinitionBody:
+        'Fn::Transform':
+          Name: 'AWS::Include'
+          Parameters:
+            Location: 'api/api.yaml'
+
+##########################################################################
+#   Roles                                                               #
+##########################################################################
+  RestApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: AllowSFNExec
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: "states:StartSyncExecution"
+              Resource: !GetAtt ProductFeedbackFormStateMachineExpressSync.Arn
+
+##########################################################################
+#   Outputs                                                              #
+##########################################################################
+Outputs:
+  CreateCase:
+    Description: "Lambda Function ARN"
+    Value: !GetAtt CreateCase.Arn
+  FormDataTable:
+    Description: DynamoDB Table
+    Value: !Ref FormDataTable
+  RestApiEndpoint:
+    Description: "Sync StepFunctions Express API endpoint"
+    Value: !Sub "https://${RestApiforSyncWF}.execute-api.${AWS::Region}.amazonaws.com/live/"
+  StepFunctionsArn:
+    Description: "Step Functions"
+    Value: !GetAtt ProductFeedbackFormStateMachineExpressSync.Arn

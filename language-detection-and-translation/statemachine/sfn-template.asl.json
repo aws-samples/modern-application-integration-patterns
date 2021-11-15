@@ -1,0 +1,102 @@
+{
+  "Comment": "A Callback example of the Amazon States Language.",
+  "StartAt": "Detect Language",
+  "States": {
+    "Detect Language": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:comprehend:detectDominantLanguage",
+      "Parameters": {
+        "Text.$": "$.SourceText"
+      },
+      "ResultPath": "$.Source",
+      "ResultSelector": {
+        "LanguageCode.$": "$.Languages[0].LanguageCode",
+        "LanguageScore.$": "$.Languages[0].LanguageScore"
+      },
+      "Next": "Low Language Code Confidence?"
+    },
+    "Low Language Code Confidence?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.Source.LanguageScore",
+          "NumericLessThan": 0.9,
+          "Next": "Request Human Decision"
+        }
+      ],
+      "Default": "Translate"
+    },
+    "Request Human Decision": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ses:sendEmail.waitForTaskToken",
+      "Parameters": {
+        "Source": "${SourceEmail}",
+        "ReplyToAddresses": [
+          "${SourceEmail}"
+        ],
+        "Destination": {
+          "ToAddresses": [
+            "${SourceEmail}"
+          ]
+        },
+        "Message": {
+          "Subject": {
+            "Data": "New form submission with negative sentiment - please follow-up!",
+            "Charset": "UTF-8"
+          },
+          "Body": {
+            "Text": {
+              "Data.$": "$",
+              "Charset": "UTF-8"
+            }
+          }
+        }
+      },
+      "ResultPath": null,
+      "Next": "Translate"
+    },
+    "Translate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:translate:translateText",
+      "Parameters": {
+        "SourceLanguageCode.$": "$.Source.LanguageCode",
+        "TargetLanguageCode": "${TargetLanguage}",
+        "Text.$": "$.SourceText"
+      },
+      "ResultPath": "$.Target",
+      "ResultSelector": {
+        "Text.$": "$.TranslatedText",
+        "LanguageCode": "${TargetLanguage}"
+      },
+      "Next": "Format Response"
+    },
+    "Format Response": {
+      "Type": "Pass",
+      "Parameters": {
+        "result": {
+          "source": {
+            "text.$": "$.SourceText",
+            "languageCode.$": "$.Source.LanguageCode"
+          },
+          "target": {
+            "text.$": "$.Target.Text",
+            "languageCode.$": "$.Target.LanguageCode"
+          }
+        }
+      },
+      "OutputPath": "$.result",
+      "Next": "Store Translation In S3"
+    },
+    "Store Translation In S3": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:putObject",
+      "Parameters": {
+        "Bucket": "${TranslationS3Bucket}",
+        "Key.$": "$$.Execution.Id",
+        "Body.$": "$"
+      },
+      "ResultPath": null,
+      "End": true
+    }
+  }
+}
