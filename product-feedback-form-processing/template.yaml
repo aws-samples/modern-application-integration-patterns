@@ -4,8 +4,8 @@ Description: >
   Serverless product feedback form handler - it accepts a form submission from a webpage and starts a state machine (workflow), which:
   1) does an sentiment analysis by using Amazon Comprehend
   2) saves the feedback data and the sentiment analysis in an Amazon DynamoDB table
-  3) in case it's a negative feedback, it generates a case and
-  4) notifies an agent to follow up with it
+  3) in case it's a negative feedback, it generates a case leveraging AWS Lambda and
+  4) notifies an agent by e-mail using Amazon SES to follow up with it
 
 ##########################################################################
 #  Parameters & Globals                                                  #
@@ -16,26 +16,46 @@ Parameters:
     Description: (Required) A validated SES email address for receiving new submissions.
     MaxLength: 70
     MinLength: 4
-    ConstraintDescription: Required. Must be a SES verified email address.
+    ConstraintDescription: Required. Must be an Amazon SES verified email address.
 
 Resources:
 ##########################################################################
-#  Dynamo DB Table                                                      #
+#  SKELETON INFRASTRUCTURE                                               #
 ##########################################################################
-  FormDataTable:
+  SkeletonDatabaseTable:
     Type: AWS::DynamoDB::Table
     Properties:
       AttributeDefinitions:
-      - AttributeName: formId
+        - AttributeName: executionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: executionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  SkeletonProductFeedbackStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: EXPRESS
+      DefinitionUri: statemachine/skeleton-solution-sfn-template.asl.json
+
+
+
+
+##########################################################################
+#  SOLUTION INFRASTRUCTURE                                               #
+##########################################################################
+  SolutionDatabaseTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: executionId
         AttributeType: S
       KeySchema:
-      - AttributeName: formId
+      - AttributeName: executionId
         KeyType: HASH
       BillingMode: PAY_PER_REQUEST
 
-##########################################################################
-#  Lambda functions                                                      #
-##########################################################################
   CreateCase:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
@@ -47,9 +67,6 @@ Resources:
       MemorySize: 128
       Tracing: Active
 
-##########################################################################
-#   CLOUD WATCH LOGS                                                     #
-##########################################################################
   ProductFeedbackFormStateMachineCloudWatchLogsGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -62,14 +79,11 @@ Resources:
       LogGroupName: /product-feedback-form-processing/api-gateway-access
       RetentionInDays: 7
 
-##########################################################################
-#   STEP FUNCTION                                                        #
-##########################################################################
   ProductFeedbackFormStateMachineExpressSync:
     Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
     Properties:
       Type: EXPRESS
-      DefinitionUri: statemachine/sfn-template.asl.json
+      DefinitionUri: statemachine/solution-sfn-template.asl.json
       Logging:
         Destinations:
           - CloudWatchLogsLogGroup:
@@ -80,14 +94,14 @@ Resources:
         Enabled: true
       DefinitionSubstitutions:
         CreateCase: !Ref CreateCase
-        DDBTable: !Ref FormDataTable
+        DDBTable: !Ref SolutionDatabaseTable
         SourceEmail: !Ref VerifiedEmail
       Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
         - ComprehendBasicAccessPolicy: {}
         - LambdaInvokePolicy:
             FunctionName: !Ref CreateCase
         - DynamoDBWritePolicy:
-            TableName: !Ref FormDataTable
+            TableName: !Ref SolutionDatabaseTable
         - SESCrudPolicy:
             IdentityName: !Ref VerifiedEmail
         - Version: 2012-10-17
@@ -105,9 +119,6 @@ Resources:
                 - logs:PutLogEvents
               Resource: "*"
 
-##########################################################################
-#   REST API                                                             #
-##########################################################################
   RestApiforSyncWF:
     Type: AWS::Serverless::Api
     Properties:
@@ -128,9 +139,6 @@ Resources:
           Parameters:
             Location: 'api/api.yaml'
 
-##########################################################################
-#   Roles                                                               #
-##########################################################################
   RestApiRole:
     Type: 'AWS::IAM::Role'
     Properties:

@@ -1,0 +1,16 @@
+{
+    "Comment": "A serverless product feedback form processor with a number of useful reference components",
+    "StartAt": "Detect Sentiment",
+    "States": {
+      "Detect Sentiment": {
+        "Type": "Pass",
+        "Result": "Ok",
+        "Next": "Record Feedback With Sentiment"
+      },
+      "Record Feedback With Sentiment": {
+        "Type": "Pass",
+        "Result": "Ok",
+        "End": true
+      }
+    }
+  }

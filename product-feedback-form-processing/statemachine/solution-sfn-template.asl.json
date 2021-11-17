@@ -32,7 +32,7 @@
         "Parameters": {
           "TableName": "${DDBTable}",
           "Item": {
-            "formId": {
+            "executionId": {
               "S.$": "$$.Execution.Id"
             },
             "feedback": {

@@ -1,3 +1,3 @@
 # Modern application integration patterns
 
-"Modern application integration patterns [in a Serverless age]" re:invent 2021 Builder Session code samples
+re:invent 2021 API307 Builder Session "Modern application integration patterns [in a Serverless age]" code samples
