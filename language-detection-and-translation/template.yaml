@@ -84,7 +84,7 @@ Resources:
         'Fn::Transform':
           Name: 'AWS::Include'
           Parameters:
-            Location: 'api/api.yaml'
+            Location: 'api/solution-api.yaml'
 
   ##########################################################################
   #   Roles                                                               #

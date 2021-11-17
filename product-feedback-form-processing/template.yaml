@@ -37,10 +37,33 @@ Resources:
     Type: AWS::Serverless::StateMachine
     Properties:
       Type: EXPRESS
-      DefinitionUri: statemachine/skeleton-solution-sfn-template.asl.json
+      DefinitionUri: statemachine/skeleton-sfn-template.asl.json
+      Policies:
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - logs:PutLogEvents
+              Resource: "*"
 
-
-
+  SkeletonRestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: live
+      EndpointConfiguration:
+        Type: REGIONAL
+      DefinitionBody:
+        'Fn::Transform':
+          Name: 'AWS::Include'
+          Parameters:
+            Location: 'api/skeleton-api.yaml'
 
 ##########################################################################
 #  SOLUTION INFRASTRUCTURE                                               #
@@ -119,7 +142,7 @@ Resources:
                 - logs:PutLogEvents
               Resource: "*"
 
-  RestApiforSyncWF:
+  SolutionRestApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: live
@@ -137,10 +160,10 @@ Resources:
         'Fn::Transform':
           Name: 'AWS::Include'
           Parameters:
-            Location: 'api/api.yaml'
+            Location: 'api/solution-api.yaml'
 
   RestApiRole:
-    Type: 'AWS::IAM::Role'
+    Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
         Version: 2012-10-17
@@ -150,14 +173,14 @@ Resources:
               Service:
               - apigateway.amazonaws.com
             Action:
-              - 'sts:AssumeRole'
+              - sts:AssumeRole
       Policies:
       - PolicyName: AllowSFNExec
         PolicyDocument:
           Version: 2012-10-17
           Statement:
             - Effect: Allow
-              Action: "states:StartSyncExecution"
+              Action: states:StartSyncExecution
               Resource: !GetAtt ProductFeedbackFormStateMachineExpressSync.Arn
       - PolicyName: AllowCWLogging
         PolicyDocument:
@@ -194,7 +217,7 @@ Outputs:
     Value: !GetAtt CreateCase.Arn
   SolutionRestApiEndpoint:
     Description: "Solution API Gateway endpoint"
-    Value: !Sub "https://${RestApiforSyncWF}.execute-api.${AWS::Region}.amazonaws.com/live/"
+    Value: !Sub "https://${SolutionRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
   SolutionStepFunctionsArn:
     Description: "Solution Step Functions"
     Value: !GetAtt ProductFeedbackFormStateMachineExpressSync.Arn

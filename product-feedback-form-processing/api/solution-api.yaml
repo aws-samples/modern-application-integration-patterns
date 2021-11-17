@@ -1,6 +1,6 @@
 openapi: "3.0.1"
 info:
-  title: "ProductFeedbackFormAPI"
+  title: "ProductFeedbackAPI"
   version: "2020-11-06 15:32:29UTC"
 servers:
   - url: {"Fn::Sub": "https://{restapi-id}.execute-api.${AWS::Region}.amazonaws.com/{stageName}"}

@@ -1,0 +1,51 @@
+openapi: "3.0.1"
+info:
+  title: "ProductFeedbackAPI"
+  version: "2020-11-06 15:32:29UTC"
+servers:
+  - url: {"Fn::Sub": "https://{restapi-id}.execute-api.${AWS::Region}.amazonaws.com/{stageName}"}
+    variables:
+      restapi-id:
+        default: "xxxxxx"
+      stageName:
+        default: "live"
+paths:
+  /:
+    post:
+      responses:
+        "200":
+          description: "200 response"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Empty"
+      x-amazon-apigateway-integration:
+        type: mock
+        requestTemplates:
+          application/json: |
+            {
+              "statusCode" : 200
+            }
+        responses:
+          default:
+            statusCode: "200"
+            responseTemplates:
+              application/json: |
+                {
+                  "feedback": "Here you should see your provided feedback",
+                  "SentimentResults": {
+                    "SentimentScore": {
+                      "Mixed": 0,
+                      "Negative": 0,
+                      "Neutral": 0,
+                      "Positive": 0
+                    }
+                    "Sentiment": "Here you should see the detected sentiment."
+                  }
+                }
+
+components:
+  schemas:
+    Empty:
+      title: "Empty Schema"
+      type: "object"
