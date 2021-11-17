@@ -1,6 +1,6 @@
 openapi: "3.0.1"
 info:
-  title: "ProductFeedbackAPI"
+  title: "SolutionProductFeedbackAPI"
   version: "2020-11-06 15:32:29UTC"
 servers:
   - url: {"Fn::Sub": "https://{restapi-id}.execute-api.${AWS::Region}.amazonaws.com/{stageName}"}
@@ -64,7 +64,7 @@ paths:
         passthroughBehavior: "when_no_templates"
         timeoutInMillis: 10000
         credentials:
-          Fn::GetAtt: [RestApiRole, Arn]
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
         requestTemplates:
           application/json:
             Fn::Sub: |-

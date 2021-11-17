@@ -102,7 +102,7 @@ Resources:
       LogGroupName: /product-feedback-form-processing/api-gateway-access
       RetentionInDays: 7
 
-  ProductFeedbackFormStateMachineExpressSync:
+  SolutionProductFeedbackStateMachine:
     Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
     Properties:
       Type: EXPRESS
@@ -162,7 +162,7 @@ Resources:
           Parameters:
             Location: 'api/solution-api.yaml'
 
-  RestApiRole:
+  SolutionRestApiRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -202,22 +202,28 @@ Resources:
 ##########################################################################
 Outputs:
   SkeletonDatabaseTable:
-    Description: Skeleton DynamoDB Table
-    Value: !Ref SkeletonDatabaseTable
+    Description: Skeleton DynamoDB Table ARN
+    Value: !GetAtt SkeletonDatabaseTable.Arn
+  SkeletonRestApiEndpoint:
+    Description: "Skeleton API Gateway endpoint"
+    Value: !Sub "https://${SkeletonRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
   SkeletonStepFunctionsArn:
-    Description: "Skeleton Step Functions"
+    Description: "Skeleton Step Functions ARN"
     Value: !GetAtt SkeletonProductFeedbackStateMachine.Arn
 
 
   SolutionDatabaseTable:
-    Description: "Solution DynamoDB Table"
-    Value: !Ref SolutionDatabaseTable
+    Description: "Solution DynamoDB Table ARN"
+    Value: !GetAtt SolutionDatabaseTable.Arn
   SolutionCreateCase:
-    Description: "Lambda Function ARN"
+    Description: "Solution Lambda Function ARN"
     Value: !GetAtt CreateCase.Arn
   SolutionRestApiEndpoint:
     Description: "Solution API Gateway endpoint"
     Value: !Sub "https://${SolutionRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
+  SolutionRestApiRole:
+    Description: "Solution IAM role ARN for API Gateway"
+    Value: !GetAtt SolutionRestApiRole.Arn
   SolutionStepFunctionsArn:
-    Description: "Solution Step Functions"
-    Value: !GetAtt ProductFeedbackFormStateMachineExpressSync.Arn
+    Description: "Solution AWS Step Functions ARN"
+    Value: !GetAtt SolutionProductFeedbackStateMachine.Arn
