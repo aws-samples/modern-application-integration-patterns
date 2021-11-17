@@ -71,7 +71,7 @@ paths:
               {
                 "input": "$util.escapeJavaScript($input.json('$'))",
                 "name": "$context.requestId",
-                "stateMachineArn": "${ProductFeedbackFormStateMachineExpressSync}"
+                "stateMachineArn": "${SolutionProductFeedbackStateMachine}"
               }
         responses:
           default:
