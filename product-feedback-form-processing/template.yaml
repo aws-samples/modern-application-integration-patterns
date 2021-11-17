@@ -11,23 +11,12 @@ Description: >
 #  Parameters & Globals                                                  #
 ##########################################################################
 Parameters:
-  ValidatedEmail:
+  VerifiedEmail:
     Type: String
     Description: (Required) A validated SES email address for receiving new submissions.
     MaxLength: 70
-    Default: validated@email.com
     MinLength: 4
     ConstraintDescription: Required. Must be a SES verified email address.
-
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
-Globals:
-  Function:
-    Timeout: 5
-    AutoPublishAlias: live
-    Handler: app.lambda_handler
-    Runtime: python3.8
-    MemorySize: 128
-    Tracing: Active
 
 Resources:
 ##########################################################################
@@ -51,6 +40,12 @@ Resources:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
       CodeUri: functions/create-case/
+      Timeout: 5
+      AutoPublishAlias: live
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      MemorySize: 128
+      Tracing: Active
 
 ##########################################################################
 #   CLOUD WATCH LOGS                                                     #
@@ -59,6 +54,12 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /product-feedback-form-processing/step-functions
+      RetentionInDays: 7
+
+  RestApiforSyncWFCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /product-feedback-form-processing/api-gateway-access
       RetentionInDays: 7
 
 ##########################################################################
@@ -80,7 +81,7 @@ Resources:
       DefinitionSubstitutions:
         CreateCase: !Ref CreateCase
         DDBTable: !Ref FormDataTable
-        SourceEmail: !Ref ValidatedEmail
+        SourceEmail: !Ref VerifiedEmail
       Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
         - ComprehendBasicAccessPolicy: {}
         - LambdaInvokePolicy:
@@ -88,7 +89,7 @@ Resources:
         - DynamoDBWritePolicy:
             TableName: !Ref FormDataTable
         - SESCrudPolicy:
-            IdentityName: !Ref ValidatedEmail
+            IdentityName: !Ref VerifiedEmail
         - Version: 2012-10-17
           Statement:
             - Effect: Allow
@@ -113,6 +114,13 @@ Resources:
       StageName: live
       EndpointConfiguration:
         Type: REGIONAL
+      MethodSettings:
+        - LoggingLevel: INFO
+          ResourcePath: "/*" # allows for logging on any resource
+          HttpMethod: "*" # allows for logging on any method
+      AccessLogSetting:
+        DestinationArn: !GetAtt RestApiforSyncWFCloudWatchLogsGroup.Arn
+        Format: "$context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] $context.httpMethod $context.resourcePath $context.protocol $context.status $context.responseLength $context.requestId"
       TracingEnabled: True
       DefinitionBody:
         'Fn::Transform':
@@ -143,6 +151,20 @@ Resources:
             - Effect: Allow
               Action: "states:StartSyncExecution"
               Resource: !GetAtt ProductFeedbackFormStateMachineExpressSync.Arn
+      - PolicyName: AllowCWLogging
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:DescribeLogGroups
+                - logs:DescribeLogStreams
+                - logs:PutLogEvents
+                - logs:GetLogEvents
+                - logs:FilterLogEvents
+              Resource: "*"
 
 ##########################################################################
 #   Outputs                                                              #
