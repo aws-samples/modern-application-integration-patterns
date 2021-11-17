@@ -181,7 +181,7 @@ Resources:
           Statement:
             - Effect: Allow
               Action: states:StartSyncExecution
-              Resource: !GetAtt ProductFeedbackFormStateMachineExpressSync.Arn
+              Resource: !GetAtt SolutionProductFeedbackStateMachine.Arn
       - PolicyName: AllowCWLogging
         PolicyDocument:
           Version: 2012-10-17
