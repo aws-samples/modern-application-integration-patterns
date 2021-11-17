@@ -25,6 +25,7 @@ Resources:
   SkeletonDatabaseTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      TableName: SkeletonDatabaseTable
       AttributeDefinitions:
         - AttributeName: executionId
           AttributeType: S
@@ -36,6 +37,7 @@ Resources:
   SkeletonProductFeedbackStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
+      Name: SkeletonProductFeedbackStateMachine
       Type: EXPRESS
       DefinitionUri: statemachine/skeleton-sfn-template.asl.json
       Policies:
@@ -64,12 +66,15 @@ Resources:
           Parameters:
             Location: 'api/skeleton-api.yaml'
 
+
+
 ##########################################################################
 #  SOLUTION INFRASTRUCTURE                                               #
 ##########################################################################
   SolutionDatabaseTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      TableName: SolutionDatabaseTable
       AttributeDefinitions:
       - AttributeName: executionId
         AttributeType: S
@@ -104,6 +109,7 @@ Resources:
   SolutionProductFeedbackStateMachine:
     Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
     Properties:
+      Name: SolutionProductFeedbackStateMachine
       Type: EXPRESS
       DefinitionUri: statemachine/solution-sfn-template.asl.json
       Logging:
@@ -199,9 +205,9 @@ Resources:
 #   Outputs                                                              #
 ##########################################################################
 Outputs:
-  SkeletonDatabaseTable:
-    Description: Skeleton DynamoDB Table ARN
-    Value: !GetAtt SkeletonDatabaseTable.Arn
+  SkeletonDatabaseTableName:
+    Description: Skeleton DynamoDB Table name
+    Value: !Ref SkeletonDatabaseTable
   SkeletonRestApiEndpoint:
     Description: "Skeleton API Gateway endpoint"
     Value: !Sub "https://${SkeletonRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
@@ -210,9 +216,9 @@ Outputs:
     Value: !GetAtt SkeletonProductFeedbackStateMachine.Arn
 
 
-  SolutionDatabaseTable:
-    Description: "Solution DynamoDB Table ARN"
-    Value: !GetAtt SolutionDatabaseTable.Arn
+  SolutionDatabaseTableName:
+    Description: "Solution DynamoDB Table name"
+    Value: !Ref SolutionDatabaseTable
   SolutionCreateCase:
     Description: "Solution Lambda Function ARN"
     Value: !GetAtt CreateCase.Arn
