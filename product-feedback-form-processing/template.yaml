@@ -42,7 +42,7 @@ Resources:
           Statement:
             - Effect: Allow
               Action:
-                - logs:CreateLogStream
+                - logs:CreateLogDelivery
                 - logs:GetLogDelivery
                 - logs:UpdateLogDelivery
                 - logs:DeleteLogDelivery
@@ -50,7 +50,6 @@ Resources:
                 - logs:PutResourcePolicy
                 - logs:DescribeResourcePolicies
                 - logs:DescribeLogGroups
-                - logs:PutLogEvents
               Resource: "*"
 
   SkeletonRestApi:
@@ -131,7 +130,7 @@ Resources:
           Statement:
             - Effect: Allow
               Action: # see https://docs.aws.amazon.com/step-functions/latest/dg/cw-logs.html
-                - logs:CreateLogStream
+                - logs:CreateLogDelivery
                 - logs:GetLogDelivery
                 - logs:UpdateLogDelivery
                 - logs:DeleteLogDelivery
@@ -139,7 +138,6 @@ Resources:
                 - logs:PutResourcePolicy
                 - logs:DescribeResourcePolicies
                 - logs:DescribeLogGroups
-                - logs:PutLogEvents
               Resource: "*"
 
   SolutionRestApi:
