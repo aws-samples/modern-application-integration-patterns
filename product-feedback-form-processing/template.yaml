@@ -178,15 +178,23 @@ Resources:
 #   Outputs                                                              #
 ##########################################################################
 Outputs:
-  CreateCase:
+  SkeletonDatabaseTable:
+    Description: Skeleton DynamoDB Table
+    Value: !Ref SkeletonDatabaseTable
+  SkeletonStepFunctionsArn:
+    Description: "Skeleton Step Functions"
+    Value: !GetAtt SkeletonProductFeedbackStateMachine.Arn
+
+
+  SolutionDatabaseTable:
+    Description: "Solution DynamoDB Table"
+    Value: !Ref SolutionDatabaseTable
+  SolutionCreateCase:
     Description: "Lambda Function ARN"
     Value: !GetAtt CreateCase.Arn
-  FormDataTable:
-    Description: DynamoDB Table
-    Value: !Ref FormDataTable
-  RestApiEndpoint:
-    Description: "Sync StepFunctions Express API endpoint"
+  SolutionRestApiEndpoint:
+    Description: "Solution API Gateway endpoint"
     Value: !Sub "https://${RestApiforSyncWF}.execute-api.${AWS::Region}.amazonaws.com/live/"
-  StepFunctionsArn:
-    Description: "Step Functions"
+  SolutionStepFunctionsArn:
+    Description: "Solution Step Functions"
     Value: !GetAtt ProductFeedbackFormStateMachineExpressSync.Arn
