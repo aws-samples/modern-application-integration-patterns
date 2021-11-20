@@ -1,6 +1,6 @@
 openapi: "3.0.1"
 info:
-  title: "LanguageDetectionAndTranslationAPI"
+  title: "SolutionLanguageDetectionAndTranslationAPI"
   version: "2020-11-06 15:32:29UTC"
 servers:
   - url: {"Fn::Sub": "https://{restapi-id}.execute-api.${AWS::Region}.amazonaws.com/{stageName}"}
@@ -66,14 +66,14 @@ paths:
         passthroughBehavior: "when_no_templates"
         timeoutInMillis: 10000
         credentials:
-          Fn::GetAtt: [RestApiRole, Arn]
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
         requestTemplates:
           application/json:
             Fn::Sub: |-
               {
                 "input": "$util.escapeJavaScript($input.json('$'))",
                 "name": "$context.requestId",
-                "stateMachineArn": "${LanguageDetectionAndTranslationStateMachine}"
+                "stateMachineArn": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:SolutionLanguageDetectionAndTranslationStateMachine"
               }
         responses:
           default:
@@ -108,14 +108,14 @@ paths:
         passthroughBehavior: "when_no_templates"
         timeoutInMillis: 10000
         credentials:
-          Fn::GetAtt: [RestApiRole, Arn]
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
         requestTemplates:
           application/json:
             Fn::Sub: |-
               {
                 "input": "$util.escapeJavaScript($input.json('$'))",
                 "name": "$context.requestId",
-                "stateMachineArn": "${LanguageDetectionAndTranslationStateMachine}"
+                "stateMachineArn": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:SolutionLanguageDetectionAndTranslationStateMachine"
               }
         responses:
           default:
@@ -159,7 +159,7 @@ paths:
         passthroughBehavior: "when_no_templates"
         timeoutInMillis: 10000
         credentials:
-          Fn::GetAtt: [RestApiRole, Arn]
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
         requestTemplates:
           application/json:
             Fn::Sub: |-
@@ -211,7 +211,7 @@ paths:
         passthroughBehavior: "when_no_templates"
         timeoutInMillis: 10000
         credentials:
-          Fn::GetAtt: [RestApiRole, Arn]
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
         requestTemplates:
           application/json:
             Fn::Sub: |-
@@ -232,6 +232,78 @@ paths:
                     "stopDate": "$inputRoot.stopDate"
                   }
                 }
+
+  respond/confirm/{proxy+}:
+    get:
+      responses:
+        "200":
+          description: "200 response"
+          headers:
+            Access-Control-Allow-Origin:
+              type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Empty"
+      x-amazon-apigateway-integration:
+        type: "aws"
+        uri: {"Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:states:action/SendTaskSuccess"}
+        httpMethod: "POST"
+        passthroughBehavior: "when_no_templates"
+        timeoutInMillis: 10000
+        credentials:
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
+        requestTemplates:
+          application/json:
+            Fn::Sub: |-
+              {
+                "output": "{\"detection\": \"confirmed\"}",
+                "taskToken": "$input.params('proxy')"
+              }
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |-
+                {}
+
+  respond/reject/{proxy+}:
+    get:
+      responses:
+        "200":
+          description: "200 response"
+          headers:
+            Access-Control-Allow-Origin:
+              type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Empty"
+      x-amazon-apigateway-integration:
+        type: "aws"
+        uri: {"Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:states:action/SendTaskFailure"}
+        httpMethod: "POST"
+        passthroughBehavior: "when_no_templates"
+        timeoutInMillis: 10000
+        credentials:
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
+        requestTemplates:
+          application/json:
+            Fn::Sub: |-
+              {
+                "cause": "{\"detection\": \"rejected\"}",
+                "taskToken": "$input.params('proxy')"
+              }
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |-
+                {}
 
 components:
   schemas:

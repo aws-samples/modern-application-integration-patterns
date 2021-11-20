@@ -11,7 +11,7 @@
       "ResultPath": "$.Source",
       "ResultSelector": {
         "LanguageCode.$": "$.Languages[0].LanguageCode",
-        "LanguageScore.$": "$.Languages[0].LanguageScore"
+        "LanguageScore.$": "$.Languages[0].Score"
       },
       "Next": "Low Language Code Confidence?"
     },
@@ -20,7 +20,7 @@
       "Choices": [
         {
           "Variable": "$.Source.LanguageScore",
-          "NumericLessThan": 0.9,
+          "NumericLessThan": 0.99,
           "Next": "Request Human Decision"
         }
       ],
@@ -41,12 +41,12 @@
         },
         "Message": {
           "Subject": {
-            "Data": "New form submission with negative sentiment - please follow-up!",
+            "Data": "Please confirm/reject the detected language!",
             "Charset": "UTF-8"
           },
           "Body": {
-            "Text": {
-              "Data.$": "$",
+            "Html": {
+              "Data.$": "States.Format('Hi there,<br /> we are unsure about the detected language.<br />Test: {}<br />Language: {}<br />Please confirm: <br />${APIEndpoint}/respond/confirm/{} <br />Or reject:<br />${APIEndpoint}/respond/reject/{} <br />', $.SourceText, $.Source.LanguageCode, $$.Task.Token, $$.Task.Token)",
               "Charset": "UTF-8"
             }
           }

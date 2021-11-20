@@ -39,7 +39,7 @@ Resources:
     Properties:
       Name: SkeletonProductFeedbackStateMachine
       Type: EXPRESS
-      DefinitionUri: statemachine/skeleton-sfn-template.asl.json
+      DefinitionUri: statemachine/skeleton-solution-sfn-template.asl.json
       Policies:
           Statement:
             - Effect: Allow
@@ -112,7 +112,7 @@ Resources:
     Properties:
       Name: SolutionProductFeedbackStateMachine
       Type: EXPRESS
-      DefinitionUri: statemachine/solution-sfn-template.asl.json
+      DefinitionUri: statemachine/solution-solution-sfn-template.asl.json
       Logging:
         Destinations:
           - CloudWatchLogsLogGroup:
