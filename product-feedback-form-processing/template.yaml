@@ -19,6 +19,26 @@ Parameters:
     ConstraintDescription: Required. Must be an Amazon SES verified email address.
 
 Resources:
+  GlobalAPIGatewayAccountConfig:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt GlobalAPIGatewayCloudWatchRole.Arn
+
+  GlobalAPIGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
 ##########################################################################
 #  SKELETON INFRASTRUCTURE                                               #
 ##########################################################################
@@ -34,16 +54,60 @@ Resources:
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
 
-  SkeletonProductFeedbackStateMachine:
-    Type: AWS::Serverless::StateMachine
+  SkeletonCreateCase:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      FunctionName: SkeletonCreateCase
+      CodeUri: functions/create-case/
+      Timeout: 5
+      AutoPublishAlias: live
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      MemorySize: 128
+      Tracing: Active
+
+  SkeletonStateMachineCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /skeleton-product-feedback-form-processing/step-functions
+      RetentionInDays: 7
+
+  SkeletonRestApiAccessCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /skeleton-product-feedback-form-processing/api-gateway-access
+      RetentionInDays: 7
+
+  SkeletonStateMachine:
+    Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
     Properties:
       Name: SkeletonProductFeedbackStateMachine
       Type: EXPRESS
-      DefinitionUri: statemachine/skeleton-solution-sfn-template.asl.json
-      Policies:
+      DefinitionUri: statemachine/skeleton-sfn-template.asl.json
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt SkeletonStateMachineCloudWatchLogsGroup.Arn
+        IncludeExecutionData: True
+        Level: ALL # ALL | ERROR | FATAL | OFF
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        CreateCase: !Ref SkeletonCreateCase
+        DDBTable: !Ref SkeletonDatabaseTable
+        SourceEmail: !Ref VerifiedEmail
+      Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
+        - ComprehendBasicAccessPolicy: {}
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SkeletonCreateCase
+        - DynamoDBWritePolicy:
+            TableName: !Ref SkeletonDatabaseTable
+        - SESCrudPolicy:
+            IdentityName: !Ref VerifiedEmail
+        - Version: 2012-10-17
           Statement:
             - Effect: Allow
-              Action:
+              Action: # see https://docs.aws.amazon.com/step-functions/latest/dg/cw-logs.html
                 - logs:CreateLogDelivery
                 - logs:GetLogDelivery
                 - logs:UpdateLogDelivery
@@ -60,12 +124,43 @@ Resources:
       StageName: live
       EndpointConfiguration:
         Type: REGIONAL
+      MethodSettings:
+        - LoggingLevel: INFO
+          ResourcePath: "/*" # allows for logging on any resource
+          HttpMethod: "*" # allows for logging on any method
+      AccessLogSetting:
+        DestinationArn: !GetAtt SkeletonRestApiAccessCloudWatchLogsGroup.Arn
+        Format: "$context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] $context.httpMethod $context.resourcePath $context.protocol $context.status $context.responseLength $context.requestId"
+      TracingEnabled: True
       DefinitionBody:
         'Fn::Transform':
           Name: 'AWS::Include'
           Parameters:
             Location: 'api/skeleton-api.yaml'
 
+  SkeletonRestApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+      Policies:
+        - PolicyName: AllowSFNStartListExecution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartSyncExecution
+                Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:SkeletonProductFeedbackStateMachine"
 
 
 ##########################################################################
@@ -83,10 +178,10 @@ Resources:
         KeyType: HASH
       BillingMode: PAY_PER_REQUEST
 
-  CreateCase:
+  SolutionCreateCase:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
-      FunctionName: CreateCase
+      FunctionName: SolutionCreateCase
       CodeUri: functions/create-case/
       Timeout: 5
       AutoPublishAlias: live
@@ -95,40 +190,40 @@ Resources:
       MemorySize: 128
       Tracing: Active
 
-  ProductFeedbackFormStateMachineCloudWatchLogsGroup:
+  SolutionStateMachineCloudWatchLogsGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /product-feedback-form-processing/step-functions
+      LogGroupName: /solution-product-feedback-form-processing/step-functions
       RetentionInDays: 7
 
-  RestApiforSyncWFCloudWatchLogsGroup:
+  SolutionRestApiAccessCloudWatchLogsGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /product-feedback-form-processing/api-gateway-access
+      LogGroupName: /solution-product-feedback-form-processing/api-gateway-access
       RetentionInDays: 7
 
-  SolutionProductFeedbackStateMachine:
+  SolutionStateMachine:
     Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
     Properties:
       Name: SolutionProductFeedbackStateMachine
       Type: EXPRESS
-      DefinitionUri: statemachine/solution-solution-sfn-template.asl.json
+      DefinitionUri: statemachine/solution-sfn-template.asl.json
       Logging:
         Destinations:
           - CloudWatchLogsLogGroup:
-              LogGroupArn: !GetAtt ProductFeedbackFormStateMachineCloudWatchLogsGroup.Arn
+              LogGroupArn: !GetAtt SolutionStateMachineCloudWatchLogsGroup.Arn
         IncludeExecutionData: True
         Level: ALL # ALL | ERROR | FATAL | OFF
       Tracing:
         Enabled: true
       DefinitionSubstitutions:
-        CreateCase: !Ref CreateCase
+        CreateCase: !Ref SolutionCreateCase
         DDBTable: !Ref SolutionDatabaseTable
         SourceEmail: !Ref VerifiedEmail
       Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
         - ComprehendBasicAccessPolicy: {}
         - LambdaInvokePolicy:
-            FunctionName: !Ref CreateCase
+            FunctionName: !Ref SolutionCreateCase
         - DynamoDBWritePolicy:
             TableName: !Ref SolutionDatabaseTable
         - SESCrudPolicy:
@@ -158,7 +253,7 @@ Resources:
           ResourcePath: "/*" # allows for logging on any resource
           HttpMethod: "*" # allows for logging on any method
       AccessLogSetting:
-        DestinationArn: !GetAtt RestApiforSyncWFCloudWatchLogsGroup.Arn
+        DestinationArn: !GetAtt SolutionRestApiAccessCloudWatchLogsGroup.Arn
         Format: "$context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] $context.httpMethod $context.resourcePath $context.protocol $context.status $context.responseLength $context.requestId"
       TracingEnabled: True
       DefinitionBody:
@@ -186,7 +281,7 @@ Resources:
           Statement:
             - Effect: Allow
               Action: states:StartSyncExecution
-              Resource: !GetAtt SolutionProductFeedbackStateMachine.Arn
+              Resource: !GetAtt SolutionStateMachine.Arn
       - PolicyName: AllowCWLogging
         PolicyDocument:
           Version: 2012-10-17
@@ -206,29 +301,58 @@ Resources:
 #   Outputs                                                              #
 ##########################################################################
 Outputs:
-  SkeletonDatabaseTableName:
-    Description: Skeleton DynamoDB Table name
-    Value: !Ref SkeletonDatabaseTable
+  SkeletonDatabaseAWSConsoleLink:
+    Description: "AWS Console link to the skeleton Amazon DynamoDB table"
+    Value: !Sub "https://console.aws.amazon.com/dynamodbv2/home?#table?name=${SkeletonDatabaseTable}"
+  SkeletonLambdaAWSConsoleLink:
+    Description: "AWS Console link to the skeleton AWS Lambda function"
+    Value: !Sub "https://console.aws.amazon.com/lambda/home?#/functions/${SkeletonCreateCase}"
+  SkeletonStepFunctionsArn:
+    Description: "Skeleton Step Functions ARN"
+    Value: !GetAtt SkeletonStateMachine.Arn
+  SkeletonStepFunctionsAWSConsoleLink:
+    Description: "AWS Console link to the skeleton Step Functions state machine"
+    Value: !Sub "https://console.aws.amazon.com/states/home?#/statemachines/view/${SkeletonStateMachine.Arn}"
   SkeletonRestApiEndpoint:
     Description: "Skeleton API Gateway endpoint"
     Value: !Sub "https://${SkeletonRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
-  SkeletonStepFunctionsArn:
-    Description: "Skeleton Step Functions ARN"
-    Value: !GetAtt SkeletonProductFeedbackStateMachine.Arn
+  SkeletonRestApiAWSConsoleLink:
+    Description: "AWS Console link to the skeleton API Gateway endpoint"
+    Value: !Sub "https://console.aws.amazon.com/apigateway/home?#/apis/${SkeletonRestApi}/resources/${SkeletonRestApi.RootResourceId}"
+  SkeletonStateMachineCloudWatchLogsGroupAWSConsoleLink:
+    Description: "AWS Console link to the skeleton CloudWatch Log Groups for AWS Step Functions"
+    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fskeleton-product-feedback-form-processing$252Fstep-functions"
+  SkeletonRestApiAccessCloudWatchLogsGroupAWSConsoleLink:
+    Description: "AWS Console link to the skeleton CloudWatch Log Groups for Amazon API Gateway access logs"
+    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fskeleton-product-feedback-form-processing$252Fapi-gateway-access"
+  SkeletonRestApiExecutionCloudWatchLogsGroupAWSConsoleLink:
+    Description: "AWS Console link to the skeleton CloudWatch Log Groups for Amazon API Gateway execution logs"
+    Value: !Sub "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/API-Gateway-Execution-Logs_${SkeletonRestApi}$252Flive"
 
-
-  SolutionDatabaseTableName:
-    Description: "Solution DynamoDB Table name"
-    Value: !Ref SolutionDatabaseTable
-  SolutionCreateCase:
-    Description: "Solution Lambda Function ARN"
-    Value: !GetAtt CreateCase.Arn
+  SolutionDatabaseAWSConsoleLink:
+    Description: "AWS Console link to the solution Amazon DynamoDB table"
+    Value: !Sub "https://console.aws.amazon.com/dynamodbv2/home?#table?name=${SolutionDatabaseTable}"
+  SolutionLambdaAWSConsoleLink:
+    Description: "AWS Console link to the solution AWS Lambda function"
+    Value: !Sub "https://console.aws.amazon.com/lambda/home?#/functions/${SolutionCreateCase}"
+  SolutionStepFunctionsArn:
+    Description: "Solution Step Functions ARN"
+    Value: !GetAtt SolutionStateMachine.Arn
+  SolutionStepFunctionsAWSConsoleLink:
+    Description: "AWS Console link to the solution Step Functions state machine"
+    Value: !Sub "https://console.aws.amazon.com/states/home?#/statemachines/view/${SolutionStateMachine.Arn}"
   SolutionRestApiEndpoint:
     Description: "Solution API Gateway endpoint"
     Value: !Sub "https://${SolutionRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
-  SolutionRestApiRole:
-    Description: "Solution IAM role ARN for API Gateway"
-    Value: !GetAtt SolutionRestApiRole.Arn
-  SolutionStepFunctionsArn:
-    Description: "Solution AWS Step Functions ARN"
-    Value: !GetAtt SolutionProductFeedbackStateMachine.Arn
+  SolutionRestApiAWSConsoleLink:
+    Description: "AWS Console link to the solution API Gateway endpoint"
+    Value: !Sub "https://console.aws.amazon.com/apigateway/home?#/apis/${SolutionRestApi}/resources/${SolutionRestApi.RootResourceId}"
+  SolutionStateMachineCloudWatchLogsGroupAWSConsoleLink:
+    Description: "AWS Console link to the solution CloudWatch Log Groups for AWS Step Functions"
+    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fsolution-product-feedback-form-processing$252Fstep-functions"
+  SolutionRestApiAccessCloudWatchLogsGroupAWSConsoleLink:
+    Description: "AWS Console link to the solution CloudWatch Log Groups for Amazon API Gateway access logs"
+    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fsolution-product-feedback-form-processing$252Fapi-gateway-access"
+  SolutionRestApiExecutionCloudWatchLogsGroupAWSConsoleLink:
+    Description: "AWS Console link to the solution CloudWatch Log Groups for Amazon API Gateway execution logs"
+    Value: !Sub "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/API-Gateway-Execution-Logs_${SolutionRestApi}$252Flive"

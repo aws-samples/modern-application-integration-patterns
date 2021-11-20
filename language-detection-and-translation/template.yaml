@@ -24,6 +24,26 @@ Parameters:
 
 
 Resources:
+  GlobalAPIGatewayAccountConfig:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt GlobalAPIGatewayCloudWatchRole.Arn
+
+  GlobalAPIGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
 ##########################################################################
 #  SKELETON INFRASTRUCTURE                                               #
 ##########################################################################
@@ -208,26 +228,6 @@ Resources:
                 - logs:DescribeLogGroups
               Resource: "*"
 
-  GlobalAPIGatewayAccountConfig:
-    Type: AWS::ApiGateway::Account
-    Properties:
-      CloudWatchRoleArn: !GetAtt GlobalAPIGatewayCloudWatchRole.Arn
-
-  GlobalAPIGatewayCloudWatchRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - apigateway.amazonaws.com
-            Action:
-              - sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
-
   SolutionRestApi:
     Type: AWS::Serverless::Api
     Properties:
@@ -314,32 +314,32 @@ Outputs:
     Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fskeleton-language-detection-and-translation$252Fapi-gateway-access"
   SkeletonRestApiExecutionCloudWatchLogsGroupAWSConsoleLink:
     Description: "AWS Console link to the skeleton CloudWatch Log Groups for Amazon API Gateway execution logs"
-    Value: !Sub "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/API-Gateway-Execution-Logs_${SkeletonRestApi}/live"
+    Value: !Sub "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/API-Gateway-Execution-Logs_${SkeletonRestApi}$252Flive"
 
   SolutionTranslationS3BucketName:
     Description: "Solution Amazon S3 bucket name"
     Value: !Ref SolutionTranslationS3Bucket
   SolutionTranslationS3BucketAWSConsoleLink:
-    Description: "AWS Console link to the skeleton Amazon S3 bucket"
+    Description: "AWS Console link to the solution Amazon S3 bucket"
     Value: !Sub "https://s3.console.aws.amazon.com/s3/buckets/${SolutionTranslationS3Bucket}"
   SolutionStepFunctionsArn:
     Description: "Solution Step Functions ARN"
     Value: !GetAtt SolutionStateMachine.Arn
   SolutionStepFunctionsAWSConsoleLink:
-    Description: "AWS Console link to the skeleton Step Functions state machine"
+    Description: "AWS Console link to the solution Step Functions state machine"
     Value: !Sub "https://console.aws.amazon.com/states/home?#/statemachines/view/${SolutionStateMachine.Arn}"
   SolutionRestApiEndpoint:
     Description: "Solution API Gateway endpoint"
     Value: !Sub "https://${SolutionRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
   SolutionRestApiAWSConsoleLink:
-    Description: "AWS Console link to the skeleton API Gateway endpoint"
+    Description: "AWS Console link to the solution API Gateway endpoint"
     Value: !Sub "https://console.aws.amazon.com/apigateway/home?#/apis/${SolutionRestApi}/resources/${SolutionRestApi.RootResourceId}"
   SolutionStateMachineCloudWatchLogsGroupAWSConsoleLink:
-    Description: "AWS Console link to the skeleton CloudWatch Log Groups for AWS Step Functions"
-    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fskeleton-language-detection-and-translation$252Fstep-functions"
+    Description: "AWS Console link to the solution CloudWatch Log Groups for AWS Step Functions"
+    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fsolution-language-detection-and-translation$252Fstep-functions"
   SolutionRestApiAccessCloudWatchLogsGroupAWSConsoleLink:
-    Description: "AWS Console link to the skeleton CloudWatch Log Groups for Amazon API Gateway access logs"
-    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fskeleton-language-detection-and-translation$252Fapi-gateway-access"
+    Description: "AWS Console link to the solution CloudWatch Log Groups for Amazon API Gateway access logs"
+    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fsolution-language-detection-and-translation$252Fapi-gateway-access"
   SolutionRestApiExecutionCloudWatchLogsGroupAWSConsoleLink:
-    Description: "AWS Console link to the skeleton CloudWatch Log Groups for Amazon API Gateway execution logs"
-    Value: !Sub "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/API-Gateway-Execution-Logs_${SolutionRestApi}/live"
+    Description: "AWS Console link to the solution CloudWatch Log Groups for Amazon API Gateway execution logs"
+    Value: !Sub "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/API-Gateway-Execution-Logs_${SolutionRestApi}$252Flive"

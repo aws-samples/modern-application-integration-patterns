@@ -11,14 +11,24 @@ servers:
         default: "live"
 paths:
   /:
-    post:
+    options:
+      summary: CORS support
+      description: |
+        Enable CORS by returning correct headers
       responses:
         "200":
-          description: "200 response"
-          content:
-            application/json:
+          description: Default response for CORS method
+          headers:
+            Access-Control-Allow-Origin:
               schema:
-                $ref: "#/components/schemas/Empty"
+                type: string
+            Access-Control-Allow-Methods:
+              schema:
+                type: string
+            Access-Control-Allow-Headers:
+              schema:
+                type: string
+          content: {}
       x-amazon-apigateway-integration:
         type: mock
         requestTemplates:
@@ -29,21 +39,48 @@ paths:
         responses:
           default:
             statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Headers: '''Content-Type,X-Amz-Date,Authorization,X-Api-Key'''
+              method.response.header.Access-Control-Allow-Methods: '''*'''
+              method.response.header.Access-Control-Allow-Origin: '''*'''
             responseTemplates:
               application/json: |
-                {
-                  "feedback": "Here you should see your provided feedback",
-                  "SentimentResults": {
-                    "SentimentScore": {
-                      "Mixed": 0,
-                      "Negative": 0,
-                      "Neutral": 0,
-                      "Positive": 0
-                    }
-                    "Sentiment": "Here you should see the detected sentiment."
-                  }
-                }
-
+                {}
+    post:
+      responses:
+        "200":
+          description: "200 response"
+          headers:
+            Access-Control-Allow-Origin:
+              type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Empty"
+      x-amazon-apigateway-integration:
+        type: "aws"
+        uri: {"Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:states:action/StartSyncExecution"}
+        httpMethod: "POST"
+        passthroughBehavior: "when_no_templates"
+        timeoutInMillis: 10000
+        credentials:
+          Fn::GetAtt: [SkeletonRestApiRole, Arn]
+        requestTemplates:
+          application/json:
+            Fn::Sub: |-
+              {
+                "input": "$util.escapeJavaScript($input.json('$'))",
+                "name": "$context.requestId",
+                "stateMachineArn": "${SkeletonStateMachine}"
+              }
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |-
+                $util.parseJson($input.json('output'))
 components:
   schemas:
     Empty:
