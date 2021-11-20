@@ -8,7 +8,7 @@ Description: >
   4) notifies an agent by e-mail using Amazon SES to follow up with it
 
 ##########################################################################
-#  Parameters & Globals                                                  #
+#  Parameters                                                            #
 ##########################################################################
 Parameters:
   VerifiedEmail:
