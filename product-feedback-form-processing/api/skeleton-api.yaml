@@ -81,6 +81,7 @@ paths:
             responseTemplates:
               application/json: |-
                 $util.parseJson($input.json('output'))
+
 components:
   schemas:
     Empty:
