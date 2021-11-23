@@ -28,16 +28,6 @@
     },
     "Record Feedback With Sentiment": {
       "Type": "Pass",
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "States.TaskFailed"
-          ],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 5
-        }
-      ],
       "Next": "How was the Feedback?"
     },
     "How was the Feedback?": {
@@ -70,18 +60,6 @@
     },
     "Create Case To Follow Up": {
       "Type": "Pass",
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
-          ],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2
-        }
-      ],
       "Next": "Notify Agent To Follow Up"
     },
     "Notify Agent To Follow Up": {
