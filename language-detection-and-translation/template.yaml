@@ -79,7 +79,6 @@ Resources:
         Enabled: true
       DefinitionSubstitutions:
         TargetLanguage: !Ref TargetLanguage
-        TranslationS3Bucket: !Ref SkeletonTranslationS3Bucket
         SourceEmail: !Ref VerifiedEmail
         APIEndpoint: !Sub "https://${SkeletonRestApi}.execute-api.${AWS::Region}.amazonaws.com/live"
       Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html

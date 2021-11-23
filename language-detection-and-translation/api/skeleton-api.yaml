@@ -90,56 +90,6 @@ paths:
                   }
                 }
 
-    get:
-      responses:
-        "200":
-          description: "200 response"
-          headers:
-            Access-Control-Allow-Origin:
-              type: "string"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Empty"
-      x-amazon-apigateway-integration:
-        type: "aws"
-        uri: {"Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:states:action/ListExecutions"}
-        httpMethod: "POST"
-        passthroughBehavior: "when_no_templates"
-        timeoutInMillis: 10000
-        credentials:
-          Fn::GetAtt: [SkeletonRestApiRole, Arn]
-        requestTemplates:
-          application/json:
-            Fn::Sub: |-
-              {
-                "input": "$util.escapeJavaScript($input.json('$'))",
-                "name": "$context.requestId",
-                "stateMachineArn": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:SkeletonLanguageDetectionAndTranslationStateMachine"
-              }
-        responses:
-          default:
-            statusCode: "200"
-            responseParameters:
-              method.response.header.Access-Control-Allow-Origin: '''*'''
-            responseTemplates:
-              application/json: |-
-                #set($inputRoot = $input.path('$.executions'))
-                {
-                  "workflows": [
-                #foreach($elem in $inputRoot)
-                #set($stopDate = $elem.stopDate)
-                  {
-                    "status": "$elem.status",
-                    "executionArn": "$elem.executionArn",
-                    "startDate": "$elem.startDate"#if($stopDate && $stopDate != 0),
-                    "stopDate": "$elem.stopDate"
-                #end
-                  }#if($foreach.hasNext),#end
-                #end
-                ]
-                }
-
   workflows/{id}:
     get:
       responses:
