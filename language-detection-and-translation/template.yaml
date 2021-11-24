@@ -50,6 +50,12 @@ Resources:
   SkeletonTranslationS3Bucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
   SkeletonStateMachineCloudWatchLogsGroup:
     Type: AWS::Logs::LogGroup
@@ -169,6 +175,12 @@ Resources:
   SolutionTranslationS3Bucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Delete
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
   SolutionStateMachineCloudWatchLogsGroup:
     Type: AWS::Logs::LogGroup
