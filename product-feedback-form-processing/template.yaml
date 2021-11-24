@@ -313,6 +313,9 @@ Outputs:
   SkeletonStepFunctionsAWSConsoleLink:
     Description: "AWS Console link to the skeleton Step Functions state machine"
     Value: !Sub "https://console.aws.amazon.com/states/home?#/statemachines/view/${SkeletonStateMachine.Arn}"
+  SkeletonRestApiId:
+    Description: "Skeleton API Gateway id"
+    Value: !Ref SkeletonRestApi
   SkeletonRestApiEndpoint:
     Description: "Skeleton API Gateway endpoint"
     Value: !Sub "https://${SkeletonRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
@@ -341,6 +344,9 @@ Outputs:
   SolutionStepFunctionsAWSConsoleLink:
     Description: "AWS Console link to the solution Step Functions state machine"
     Value: !Sub "https://console.aws.amazon.com/states/home?#/statemachines/view/${SolutionStateMachine.Arn}"
+  SolutionRestApiId:
+    Description: "Solution API Gateway id"
+    Value: !Ref SolutionRestApi
   SolutionRestApiEndpoint:
     Description: "Solution API Gateway endpoint"
     Value: !Sub "https://${SolutionRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
