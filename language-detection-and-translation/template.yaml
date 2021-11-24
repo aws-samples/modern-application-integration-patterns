@@ -49,7 +49,7 @@ Resources:
 ##########################################################################
   SkeletonTranslationS3Bucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Delete
+    DeletionPolicy: Retain
 
   SkeletonStateMachineCloudWatchLogsGroup:
     Type: AWS::Logs::LogGroup
