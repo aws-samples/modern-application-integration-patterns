@@ -1,0 +1,211 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "Format Summarize Parameter",
+  "States": {
+    "Format Summarize Parameter": {
+      "Type": "Pass",
+      "Next": "Summarize Text",
+      "Parameters": {
+        "input_param": {
+          "inputs.$": "$.text"
+        }
+      }
+    },
+    "Summarize Text": {
+      "Type": "Task",
+      "Next": "Store Text Summary",      
+      "Parameters": {
+        "Body.$": "States.JsonToString($.input_param)",
+        "EndpointName": "${ENDPOINT_NAME}",
+        "ContentType": "application/json"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:sagemakerruntime:invokeEndpoint",
+      "ResultSelector": {
+        "body.$": "States.StringToJson($.Body)"
+      },
+      "OutputPath": "$.body[0]"
+    },
+    "Store Text Summary": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "SolutionResultsTable",
+        "Item": {
+          "ExecutionArn": {
+            "S.$": "$$.Execution.Id"
+          },
+          "SummaryText": {
+            "S.$": "$.summary_text"
+          }
+        }
+      },
+      "Next": "Send Text Summary to WebSocket Connection",
+      "ResultPath": null
+    },
+    "Send Text Summary to WebSocket Connection": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${SEND_RESULT_FUNCTION_ARN}",
+        "Payload": {
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "NoAvailableWebSocketConnectionException"
+          ],
+          "IntervalSeconds": 3,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Start Text to Speech Job"
+        }
+      ],
+      "Next": "Start Text to Speech Job",
+      "ResultPath": null
+    },
+    "Start Text to Speech Job": {
+      "Type": "Task",
+      "Next": "Wait",
+      "Parameters": {
+        "OutputFormat": "mp3",
+        "OutputS3BucketName": "${BUCKET_NAME}",
+        "Text.$": "$.summary_text",
+        "VoiceId": "Joanna"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:polly:startSpeechSynthesisTask"      
+    },
+    "Wait": {
+      "Type": "Wait",
+      "Seconds": 5,
+      "Next": "Get Job Status"
+    },
+    "Get Job Status": {
+      "Type": "Task",
+      "InputPath" : "$.SynthesisTask.TaskId",
+      "Parameters": {
+        "TaskId.$": "$"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:polly:getSpeechSynthesisTask",
+      "Next": "Job Complete?",      
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ]
+    },
+    "Job Complete?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.SynthesisTask.TaskStatus",
+          "StringEquals": "failed",
+          "Next": "Job Failed"
+        },
+        {
+          "Variable": "$.SynthesisTask.TaskStatus",
+          "StringEquals": "completed",
+          "Next": "Generate Signed S3 Audio Summary Link"
+        }
+      ],
+      "Default": "Wait"
+    },
+    "Generate Signed S3 Audio Summary Link": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "${SIGN_LINK_FUNCTION_ARN}",
+        "Payload": {
+          "OutputUri.$": "$.SynthesisTask.OutputUri"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Store Audio Summary Link"
+    },
+    "Job Failed": {
+      "Type": "Fail",
+      "Cause": "getSpeechSynthesisTask returned failed status. See TaskStatusReason for details"      
+    },
+    "Store Audio Summary Link": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "SolutionResultsTable",
+        "Key": {
+          "ExecutionArn": {
+            "S.$": "$$.Execution.Id"
+          }
+        },
+        "UpdateExpression": "SET AudioSummaryLink = :val1",
+        "ExpressionAttributeValues": {
+          ":val1": {
+            "S.$": "$.signed_s3_link"
+          }
+        }
+      },
+      "Next": "Send Audio Summary Link to WebSocket Connection",
+      "ResultPath": null
+    },
+    "Send Audio Summary Link to WebSocket Connection": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "Payload": {          
+          "executionArn.$": "$$.Execution.Id"
+        },
+        "FunctionName": "${SEND_RESULT_FUNCTION_ARN}"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Success"
+        }
+      ],
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
