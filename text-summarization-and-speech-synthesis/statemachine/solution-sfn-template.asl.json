@@ -1,5 +1,5 @@
 {
-  "Comment": "A description of my state machine",
+  "Comment": "A solution state machine workflow for text summarization and speech synthesis.",
   "StartAt": "Format Summarize Parameter",
   "States": {
     "Format Summarize Parameter": {
@@ -29,7 +29,7 @@
       "Type": "Task",
       "Resource": "arn:aws:states:::dynamodb:putItem",
       "Parameters": {
-        "TableName": "SolutionResultsTable",
+        "TableName": "${RESULT_TABLE_NAME}",
         "Item": {
           "ExecutionArn": {
             "S.$": "$$.Execution.Id"
@@ -57,7 +57,7 @@
             "Lambda.ServiceException",
             "Lambda.AWSLambdaException",
             "Lambda.SdkClientException",
-            "NoAvailableWebSocketConnectionException"
+            "UnableToAccessDatabaseException"
           ],
           "IntervalSeconds": 3,
           "MaxAttempts": 3,
@@ -67,13 +67,17 @@
       "Catch": [
         {
           "ErrorEquals": [
-            "States.ALL"
+            "UnableToAccessDatabaseException",
+            "NoAvailableResultsException"
           ],
-          "Next": "Start Text to Speech Job"
+          "Next": "Failed to Retrieve Results"
         }
       ],
       "Next": "Start Text to Speech Job",
       "ResultPath": null
+    },
+    "Failed to Retrieve Results": {
+      "Type": "Fail"
     },
     "Start Text to Speech Job": {
       "Type": "Task",
@@ -131,7 +135,7 @@
       "Parameters": {
         "FunctionName": "${SIGN_LINK_FUNCTION_ARN}",
         "Payload": {
-          "OutputUri.$": "$.SynthesisTask.OutputUri"
+          "inputUri.$": "$.SynthesisTask.OutputUri"
         }
       },
       "Retry": [
@@ -156,7 +160,7 @@
       "Type": "Task",
       "Resource": "arn:aws:states:::dynamodb:updateItem",
       "Parameters": {
-        "TableName": "SolutionResultsTable",
+        "TableName": "${RESULT_TABLE_NAME}",
         "Key": {
           "ExecutionArn": {
             "S.$": "$$.Execution.Id"
@@ -187,7 +191,8 @@
           "ErrorEquals": [
             "Lambda.ServiceException",
             "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
+            "Lambda.SdkClientException",
+            "UnableToAccessDatabaseException"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 6,
@@ -197,9 +202,10 @@
       "Catch": [
         {
           "ErrorEquals": [
-            "States.ALL"
+            "UnableToAccessDatabaseException",
+            "NoAvailableResultsException"
           ],
-          "Next": "Success"
+          "Next": "Failed to Retrieve Results"
         }
       ],
       "Next": "Success"

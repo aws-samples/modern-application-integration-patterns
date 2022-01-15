@@ -23,10 +23,6 @@ class UnableToAccessDatabaseException(Exception):
     pass
 
 
-class NoAvailableWebSocketConnectionException(Exception):
-    pass
-
-
 class NoAvailableResultsException(Exception):
     pass
 
@@ -46,22 +42,29 @@ def lambda_handler(event, context):
     currentExecutionArn = event.get("executionArn")
     database_key = {"ExecutionArn": currentExecutionArn}
 
-    results_response = get_database_item(results_table, database_key)
+    # implement a direct message to WebSocket connection function for initial skeleton implementation
+    msg_override = event.get("msgOverride")
 
-    if not results_response.get("Item"):
-        raise NoAvailableResultsException
+    if msg_override:
+        result_item = {"message": msg_override}
+    else:
+        results_response = get_database_item(results_table, database_key)
+        if not results_response.get("Item"):
+            raise NoAvailableResultsException
+
+        result_item = results_response["Item"]
 
     connections_response = get_database_item(connections_table, database_key)
 
     # no item indicates no WebSocket connection has been opened to send the result back to
+    # this is an optional task and not an error condition, the workflow should continue.
     if not connections_response.get("Item"):
-        raise NoAvailableWebSocketConnectionException
+        return {"result_item": result_item, "sent_item": False}
 
-    result_item = results_response["Item"]
-    result_item_json = json.dumps(result_item)
     execution_websocket_connection = connections_response["Item"]["WsClientId"]
+    result_item_json = json.dumps(result_item)
 
     ws_response = apiManagement.post_to_connection(
         ConnectionId=execution_websocket_connection, Data=result_item_json
     )
-    return {"result_item": result_item}
+    return {"result_item": result_item, "sent_item": True}

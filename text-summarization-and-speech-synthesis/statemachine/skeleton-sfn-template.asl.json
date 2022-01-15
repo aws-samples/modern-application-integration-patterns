@@ -1,0 +1,40 @@
+{
+  "Comment": "A skeleton state machine workflow for text summarization and speech synthesis.",
+  "StartAt": "Format Summarize Parameter",
+  "States": {
+    "Format Summarize Parameter": {
+      "Type": "Pass",
+      "Next": "Wait",
+      "Parameters": {
+        "input_param": {
+          "inputs.$": "$.text"
+        }
+      }
+    },
+    "Wait": {
+      "Type": "Wait",
+      "Seconds": 5,
+      "Next": "Placeholder message"
+    },
+    "Placeholder message": {
+      "Type": "Pass",
+      "Next": "Send Text Summary to WebSocket Connection",
+      "Parameters": {
+        "msgOverride": "In summary, this needs to be implemented!"
+      }
+    },
+    "Send Text Summary to WebSocket Connection": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${SEND_RESULT_FUNCTION_ARN}",
+        "Payload": {
+          "executionArn.$": "$$.Execution.Id",
+          "msgOverride.$" : "$.msgOverride"
+        }
+      },
+      "ResultPath": null,
+      "End": true
+    }
+  }
+}

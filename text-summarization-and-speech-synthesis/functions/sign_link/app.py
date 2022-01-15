@@ -7,22 +7,23 @@ API_REGION = os.environ.get("API_REGION")
 
 s3_client = boto3.client("s3", region_name=API_REGION)
 
+INPUT_PARAMETER_NAME = "inputUri"
 
-class InvalidOutputUriException(Exception):
+
+class InvalidInputUriException(Exception):
     pass
 
 
 def lambda_handler(event, context):
-    text_summary_output_uri = event.get("OutputUri")
+    uri_to_sign = event.get(INPUT_PARAMETER_NAME)
 
-    if not text_summary_output_uri:
-        raise InvalidOutputUriException
+    if not uri_to_sign:
+        raise InvalidInputUriException
 
     link_expiration = event.get("link_expiry", DEFAULT_EXPIRATION)
 
-    url_path = urlparse(text_summary_output_uri).path
+    url_path = urlparse(uri_to_sign).path
     split_path = url_path.split("/")
-    print(split_path)
     s3_bucket = split_path[1]
     s3_object = split_path[2]
 
@@ -30,6 +31,7 @@ def lambda_handler(event, context):
     signed_link = s3_client.generate_presigned_url(
         "get_object", Params=params, ExpiresIn=link_expiration
     )
+
     print("s3 pre-signed URL: " + signed_link)
 
     return {"signed_s3_link": signed_link}

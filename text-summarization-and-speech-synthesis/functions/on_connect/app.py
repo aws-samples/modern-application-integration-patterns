@@ -25,5 +25,6 @@ def lambda_handler(event, context):
         }
     except Exception as e:
         print(e)
+        return {"statusCode": 500, "body": "Error on connect, check logs"}
 
     return {"statusCode": 200, "body": "Connected"}
