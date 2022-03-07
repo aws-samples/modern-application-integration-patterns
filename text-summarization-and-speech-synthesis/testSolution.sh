@@ -13,7 +13,6 @@ function get_cf_output () {
 }
 
 REST_ENDPOINT=$(get_cf_output "SolutionRestApiEndpoint")/workflows
-echo $REST_ENDPOINT
 echo "Connecting to REST API ($REST_ENDPOINT) to start Step Functions Execution..."
 REST_MSG=$(jq -r -n --arg v "$MSG" '{"text": $v}')
 SFN_EXE_ARN=$(curl -X POST -d "$REST_MSG" $REST_ENDPOINT --header "Content-Type:application/json" -s | jq -r .workflow.executionArn)
