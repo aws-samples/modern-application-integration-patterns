@@ -803,7 +803,7 @@ Outputs:
     Value: !Ref SolutionRestApi
   SolutionRestApiEndpoint:
     Description: "Solution API Gateway endpoint"
-    Value: !Sub "https://${SolutionRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
+    Value: !Sub "https://${SolutionRestApi}.execute-api.${AWS::Region}.amazonaws.com/live"
   SolutionWebsocketEndpoint:
     Description: "Solution API Gateway endpoint"
     Value: !Sub "wss://${SolutionWebsocketApi}.execute-api.${AWS::Region}.amazonaws.com/${SolutionWebsocketApiStage}/"
@@ -830,7 +830,7 @@ Outputs:
     Value: !Ref SolutionSynthesizeSpeechBucket
   SkeletonRestApiEndpoint:
     Description: "Skeleton API Gateway endpoint"
-    Value: !Sub "https://${SkeletonRestApi}.execute-api.${AWS::Region}.amazonaws.com/live/"
+    Value: !Sub "https://${SkeletonRestApi}.execute-api.${AWS::Region}.amazonaws.com/live"
   SkeletonWebsocketEndpoint:
     Description: "Skeleton API Gateway endpoint"
     Value: !Sub "wss://${SkeletonWebsocketApi}.execute-api.${AWS::Region}.amazonaws.com/${SkeletonWebsocketApiStage}/"

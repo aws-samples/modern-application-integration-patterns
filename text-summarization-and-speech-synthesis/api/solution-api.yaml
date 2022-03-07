@@ -46,6 +46,7 @@ paths:
             responseTemplates:
               application/json: |
                 {}
+  workflows:
     post:
       responses:
         "200":
