@@ -17,7 +17,7 @@ class DatabaseException(Exception):
 def lambda_handler(event, context):
     print(event)
 
-    websocket_connectionId: str = str(event["requestContext"]["connectionId"])
+    websocket_connectionId = event["requestContext"]["connectionId"]
     websocket_connection_index_name = table.global_secondary_indexes[0]["IndexName"]
 
     try:
