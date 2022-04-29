@@ -1,0 +1,220 @@
+{
+  "Comment": "A solution state machine workflow for text summarization and speech synthesis.",
+  "StartAt": "Format Summarize Parameter",
+  "States": {
+    "Format Summarize Parameter": {
+      "Type": "Pass",      
+      "Parameters": {
+        "input_param": {
+          "inputs.$": "$.text"
+        }
+      },
+      "Next": "Summarize Text"
+    },
+    "Summarize Text": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:sagemakerruntime:invokeEndpoint",
+      "Parameters": {
+        "Body.$": "States.JsonToString($.input_param)",
+        "EndpointName": "${ENDPOINT_NAME}",
+        "ContentType": "application/json"
+      },
+      
+      "ResultSelector": {
+        "body.$": "States.StringToJson($.Body)"
+      },
+      "OutputPath": "$.body[0]",
+      "Next": "Store Text Summary"
+    },
+    "Store Text Summary": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "${RESULT_TABLE_NAME}",
+        "Item": {
+          "ExecutionArn": {
+            "S.$": "$$.Execution.Id"
+          },
+          "SummaryText": {
+            "S.$": "$.summary_text"
+          }
+        }
+      },      
+      "ResultPath": null,
+      "Next": "Send Text Summary to WebSocket Connection"
+    },
+    "Send Text Summary to WebSocket Connection": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${SEND_RESULT_FUNCTION_ARN}",
+        "Payload": {
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "UnableToAccessDatabaseException"
+          ],
+          "IntervalSeconds": 3,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "UnableToAccessDatabaseException",
+            "NoAvailableResultsException"
+          ],
+          "Next": "Failed to Retrieve Results"
+        }
+      ],
+      "ResultPath": null,
+      "Next": "Start Text to Speech Job"
+    },
+    "Failed to Retrieve Results": {
+      "Type": "Fail"
+    },
+    "Start Text to Speech Job": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:polly:startSpeechSynthesisTask",
+      "Parameters": {
+        "OutputFormat": "mp3",
+        "OutputS3BucketName": "${BUCKET_NAME}",
+        "Text.$": "$.summary_text",
+        "VoiceId": "Joanna"
+      },
+      "Next": "Wait"
+    },
+    "Wait": {
+      "Type": "Wait",
+      "Seconds": 5,
+      "Next": "Get Job Status"
+    },
+    "Get Job Status": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:polly:getSpeechSynthesisTask",
+      "InputPath": "$.SynthesisTask.TaskId",
+      "Parameters": {
+        "TaskId.$": "$"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Job Complete?"
+    },
+    "Job Complete?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.SynthesisTask.TaskStatus",
+          "StringEquals": "failed",
+          "Next": "Job Failed"
+        },
+        {
+          "Variable": "$.SynthesisTask.TaskStatus",
+          "StringEquals": "completed",
+          "Next": "Generate Signed S3 Audio Summary Link"
+        }
+      ],
+      "Default": "Wait"
+    },
+    "Generate Signed S3 Audio Summary Link": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",      
+      "Parameters": {
+        "FunctionName": "${SIGN_LINK_FUNCTION_ARN}",
+        "Payload": {
+          "inputUri.$": "$.SynthesisTask.OutputUri"
+        }
+      },
+      "OutputPath": "$.Payload",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Store Audio Summary Link"
+    },
+    "Job Failed": {
+      "Type": "Fail",
+      "Cause": "getSpeechSynthesisTask returned failed status. See TaskStatusReason for details."
+    },
+    "Store Audio Summary Link": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${RESULT_TABLE_NAME}",
+        "Key": {
+          "ExecutionArn": {
+            "S.$": "$$.Execution.Id"
+          }
+        },
+        "UpdateExpression": "SET AudioSummaryLink = :val1",
+        "ExpressionAttributeValues": {
+          ":val1": {
+            "S.$": "$.signed_s3_link"
+          }
+        }
+      },      
+      "ResultPath": null,
+      "Next": "Send Audio Summary Link to WebSocket Connection"
+    },
+    "Send Audio Summary Link to WebSocket Connection": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",      
+      "Parameters": {
+        "Payload": {
+          "executionArn.$": "$$.Execution.Id"
+        },
+        "FunctionName": "${SEND_RESULT_FUNCTION_ARN}"
+      },
+      "OutputPath": "$.Payload",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "UnableToAccessDatabaseException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "UnableToAccessDatabaseException",
+            "NoAvailableResultsException"
+          ],
+          "Next": "Failed to Retrieve Results"
+        }
+      ],
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}

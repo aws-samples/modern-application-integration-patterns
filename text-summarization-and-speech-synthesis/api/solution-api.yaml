@@ -1,0 +1,199 @@
+openapi: "3.0.1"
+info:
+  title: "SolutionTextSummaryRESTAPI"
+  version: "2020-11-06 15:32:29UTC"
+servers:
+  - url: {"Fn::Sub": "https://{restapi-id}.execute-api.${AWS::Region}.amazonaws.com/{stageName}"}
+    variables:
+      restapi-id:
+        default: "xxxxxx"
+      stageName:
+        default: "live"
+paths:
+  /:
+    options:
+      summary: CORS support
+      description: |
+        Enable CORS by returning correct headers
+      responses:
+        "200":
+          description: Default response for CORS method
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+            Access-Control-Allow-Methods:
+              schema:
+                type: string
+            Access-Control-Allow-Headers:
+              schema:
+                type: string
+          content: {}
+      x-amazon-apigateway-integration:
+        type: mock
+        requestTemplates:
+          application/json: |
+            {
+              "statusCode" : 200
+            }
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Headers: '''Content-Type,X-Amz-Date,Authorization,X-Api-Key'''
+              method.response.header.Access-Control-Allow-Methods: '''*'''
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |
+                {}
+  workflows:
+    post:
+      responses:
+        "200":
+          description: "200 response"
+          headers:
+            Access-Control-Allow-Origin:
+              type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Empty"
+      x-amazon-apigateway-integration:
+        type: "aws"
+        uri: {"Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:states:action/StartExecution"}
+        httpMethod: "POST"
+        passthroughBehavior: "when_no_templates"
+        timeoutInMillis: 10000
+        credentials:
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
+        requestTemplates:
+          application/json:
+            Fn::Sub: |-
+              {
+                "input": "$util.escapeJavaScript($input.json('$'))",
+                "name": "$context.requestId",
+                "stateMachineArn": "${SolutionStateMachine}"
+              }
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |-
+                #set($inputRoot = $input.path('$'))
+                {
+                  "workflow": {
+                    "executionArn": "$inputRoot.executionArn",
+                    "startDate": "$inputRoot.startDate"
+                  }
+                }
+
+    get:
+      responses:
+        "200":
+          description: "200 response"
+          headers:
+            Access-Control-Allow-Origin:
+              type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Empty"
+      x-amazon-apigateway-integration:
+        type: "aws"
+        uri: {"Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:states:action/ListExecutions"}
+        httpMethod: "POST"
+        passthroughBehavior: "when_no_templates"
+        timeoutInMillis: 10000
+        credentials:
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
+        requestTemplates:
+          application/json:
+            Fn::Sub: |-
+              {
+                "input": "$util.escapeJavaScript($input.json('$'))",
+                "name": "$context.requestId",
+                "stateMachineArn": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${SolutionStateMachine.Name}"
+              }
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |-
+                #set($inputRoot = $input.path('$.executions'))
+                {
+                  "workflows": [
+                #foreach($elem in $inputRoot)
+                #set($stopDate = $elem.stopDate)
+                  {
+                    "status": "$elem.status",
+                    "executionArn": "$elem.executionArn",
+                    "startDate": "$elem.startDate"#if($stopDate && $stopDate != 0),
+                    "stopDate": "$elem.stopDate"
+                #end
+                  }#if($foreach.hasNext),#end
+                #end
+                ]
+                }
+
+  workflows/{id}:
+    get:
+      responses:
+        "200":
+          description: "200 response"
+          headers:
+            Access-Control-Allow-Origin:
+              type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Empty"
+      x-amazon-apigateway-integration:
+        type: "aws"
+        uri: {"Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:states:action/DescribeExecution"}
+        httpMethod: "POST"
+        passthroughBehavior: "when_no_templates"
+        timeoutInMillis: 10000
+        credentials:
+          Fn::GetAtt: [SolutionRestApiRole, Arn]
+        requestTemplates:
+          application/json:
+            Fn::Sub: |-
+              {
+                "executionArn": "$input.params('id')"
+              }
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: '''*'''
+            responseTemplates:
+              application/json: |-
+                #set($inputRoot = $input.path('$'))
+                {
+                  "workflow": {
+                #set($stopDate = $inputRoot.stopDate)
+                #set($status = $inputRoot.status)
+                #set($in = $util.parseJson($inputRoot.input))
+                #set($out = $util.parseJson($inputRoot.output))
+                    "status": "$status",
+                    "executionArn": "$inputRoot.executionArn",
+                    "startDate": "$inputRoot.startDate"#if($stopDate && $stopDate != 0),
+                    "stopDate": "$stopDate"#end#if($status && $status == 'SUCCEEDED'),
+                    "workflowDetails": {
+                      "input_text": "$in.text",
+                      "summary_text": "$out.result_item.SummaryText",
+                      "audio_summary_link": "$out.result_item.AudioSummaryLink"
+                    }
+                #end
+                  }
+                }
+
+components:
+  schemas:
+    Empty:
+      title: "Empty Schema"
+      type: "object"

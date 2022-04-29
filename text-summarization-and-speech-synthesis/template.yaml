@@ -1,0 +1,827 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Serverless text summarization and speech synthesis with WebSocket notifications -  the solution takes text input to an API which then starts a Step Functions state machine (workflow), which:
+  1) summarizes the text to key sentences using a pre-trained Machine Learning model from Hugging Face
+  2) saves the text summary in an Amazon DynamoDB table and sends this intermediate result back to the client via a WebSocket connection
+  3) converts the text summary to speech using Amazon Polly and saves the spoken summary to an audio file in Amazon Simple Storage Service (S3)
+  4) sends a link to the spoken text summary, together with the original text summary, back to the client via the WebSocket connection
+
+##########################################################################
+#  Parameters                                                            #
+##########################################################################
+Parameters:
+  LogRetention:
+    Type: Number
+    Description: (Required) Default log retention in days for lambda logs.
+    Default: 1
+  SummarizationModelID:
+    Type: String
+    Default: t5-small
+  
+Globals:
+  Function:
+    Handler: app.lambda_handler
+    Timeout: 10
+    MemorySize: 128
+    Runtime: python3.9
+    Tracing: Active    
+
+Resources:
+  GlobalAPIGatewayAccountConfig:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt GlobalAPIGatewayCloudWatchRole.Arn
+
+  GlobalAPIGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  ##########################################################################
+  #  SKELETON INFRASTRUCTURE                                               #
+  ##########################################################################
+  SkeletonRestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: live
+      EndpointConfiguration:
+        Type: REGIONAL
+      MethodSettings:
+        - LoggingLevel: INFO
+          ResourcePath: "/*" # allows for logging on any resource
+          HttpMethod: "*" # allows for logging on any method
+      AccessLogSetting:
+        DestinationArn: !GetAtt SkeletonRestApiAccessCloudWatchLogsGroup.Arn
+        Format: "$context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] $context.httpMethod $context.resourcePath $context.protocol $context.status $context.responseLength $context.requestId"
+      TracingEnabled: True
+      DefinitionBody:
+        "Fn::Transform":
+          Name: "AWS::Include"
+          Parameters:
+            Location: "api/skeleton-api.yaml"
+
+  SkeletonRestApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: StartAndListSFNExec
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - states:StartExecution
+                  - states:ListExecutions                  
+                Resource: !GetAtt SkeletonStateMachine.Arn
+        - PolicyName: DescribeSFNExecution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:DescribeExecution                  
+                Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${SkeletonStateMachine.Name}:*"
+        - PolicyName: AllowCWLogging
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                  - logs:GetLogEvents
+                  - logs:FilterLogEvents
+                Resource: "*"
+  
+  SkeletonRestApiAccessCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /skeleton-websocket/api-gateway-rest-access
+      RetentionInDays: !Ref LogRetention
+
+  SkeletonStateMachine:
+      Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
+      Properties:
+        Name: SkeletonTextSummarizationStateMachine
+        Type: STANDARD
+        DefinitionUri: statemachine/skeleton-sfn-template.asl.json
+        DefinitionSubstitutions:
+          SEND_RESULT_FUNCTION_ARN: !GetAtt SkeletonSendResultFunction.Arn
+          ENDPOINT_NAME: !GetAtt SolutionSageMakerEndpoint.EndpointName
+          BUCKET_NAME: !Ref SkeletonSynthesizeSpeechBucket
+          SIGN_LINK_FUNCTION_ARN: !GetAtt SkeletonSignLinkFunction.Arn
+          RESULT_TABLE_NAME: !Ref SkeletonResultsTable
+        Logging:
+          Destinations:
+            - CloudWatchLogsLogGroup:
+                LogGroupArn: !GetAtt SkeletonStateMachineCloudWatchLogsGroup.Arn
+          IncludeExecutionData: True
+          Level: ALL # ALL | ERROR | FATAL | OFF
+        Tracing:
+          Enabled: true
+        Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
+          - S3CrudPolicy:
+              BucketName: !Ref SkeletonSynthesizeSpeechBucket
+          - LambdaInvokePolicy:
+              FunctionName: !Ref SkeletonSendResultFunction        
+          - DynamoDBWritePolicy:
+              TableName: !Ref SkeletonConnectionsTable
+          - DynamoDBWritePolicy:
+              TableName: !Ref SkeletonResultsTable
+          - Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: # see https://docs.aws.amazon.com/step-functions/latest/dg/cw-logs.html
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+          - Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - polly:SynthesizeSpeech
+                  - polly:StartSpeechSynthesisTask
+                  - polly:GetSpeechSynthesisTask
+                Resource: "*"
+          - Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpoint
+                Resource: !Ref SolutionSageMakerEndpoint
+          - LambdaInvokePolicy:
+              FunctionName: !Ref SkeletonSignLinkFunction   
+
+  SkeletonStateMachineCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /skeleton-websocket/sfn-text-summarizer
+      RetentionInDays: !Ref LogRetention
+
+  SkeletonConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SkeletonTextSummaryConnectionsTable
+      AttributeDefinitions:
+        - AttributeName: ExecutionArn
+          AttributeType: S
+        - AttributeName: WsClientId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ExecutionArn
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: WSConnectionIndex
+          KeySchema:
+            - AttributeName: WsClientId
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+
+  SkeletonResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SkeletonTextSummaryResultsTable
+      AttributeDefinitions:
+        - AttributeName: ExecutionArn
+          AttributeType: S        
+      KeySchema:
+        - AttributeName: ExecutionArn
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  SkeletonSynthesizeSpeechBucket:
+    Type: AWS::S3::Bucket
+
+  SkeletonWebsocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: SkeletonTextSummaryWebsocketApi
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: $request.body.action
+
+  SkeletonConnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SkeletonWebsocketApi
+      Description: Connect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SkeletonOnConnectFunction.Arn}/invocations
+
+  SkeletonConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SkeletonWebsocketApi
+      RouteKey: OpenConnection
+      AuthorizationType: NONE
+      OperationName: ConnectRoute
+      Target: !Join ["/", [integrations, !Ref SkeletonConnectInteg]]
+
+  SkeletonWebsocketApiDeployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+      - SkeletonConnectRoute
+    Properties:
+      ApiId: !Ref SkeletonWebsocketApi
+
+  SkeletonWebsocketApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: Prod
+      Description: Prod Stage
+      DeploymentId: !Ref SkeletonWebsocketApiDeployment
+      ApiId: !Ref SkeletonWebsocketApi
+      AccessLogSettings:
+        DestinationArn: !GetAtt SkeletonWebsocketApiAccessCloudWatchLogsGroup.Arn
+        Format: "$context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] $context.httpMethod $context.resourcePath $context.protocol $context.status $context.responseLength $context.requestId"
+
+  SkeletonWebsocketApiAccessCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /skeleton-websocket/api-gateway-websocket-access
+      RetentionInDays: !Ref LogRetention
+
+  SkeletonDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SkeletonWebsocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target: !Join ["/", [integrations, !Ref SkeletonDisconnectInteg]]
+
+  SkeletonDisconnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SkeletonWebsocketApi
+      Description: Disconnect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SkeletonDisconnectFunction.Arn}/invocations
+
+  SkeletonOnConnectFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: functions/on_connect/
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE_NAME: !Ref SkeletonConnectionsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SkeletonConnectionsTable
+  
+  SkeletonOnConnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SkeletonWebsocketApi
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SkeletonOnConnectFunction
+      Principal: apigateway.amazonaws.com
+
+  SkeletonOnConnectFunctionCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SkeletonOnConnectFunction}"
+      RetentionInDays: !Ref LogRetention
+
+  SkeletonDisconnectFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: functions/on_disconnect/     
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref SkeletonConnectionsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SkeletonConnectionsTable
+  
+  SkeletonDisconnectFunctionPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SkeletonWebsocketApi
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SkeletonDisconnectFunction
+      Principal: apigateway.amazonaws.com
+
+  SkeletonDisconnectFunctionCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SkeletonDisconnectFunction}"
+      RetentionInDays: !Ref LogRetention
+
+  SkeletonSendResultFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: functions/send_result/
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE_NAME: !Ref SkeletonConnectionsTable
+          RESULTS_TABLE_NAME: !Ref SkeletonResultsTable
+          WEBSOCKET_CALLBACK_URL: !Sub "https://${SkeletonWebsocketApi}.execute-api.${AWS::Region}.amazonaws.com/${SkeletonWebsocketApiStage}"
+          API_REGION: !Ref "AWS::Region"
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SkeletonConnectionsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref SkeletonResultsTable
+        - Statement:
+            - Sid: AllowPostToConnection
+              Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${SkeletonWebsocketApi}/*"
+
+  SkeletonSendResultFunctionCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SkeletonSendResultFunction}"
+      RetentionInDays: !Ref LogRetention
+
+  SkeletonSignLinkFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: functions/sign_link/      
+      Environment:
+        Variables:            
+          API_REGION: !Ref "AWS::Region"
+      Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
+        - S3ReadPolicy:
+            BucketName: !Ref SkeletonSynthesizeSpeechBucket
+
+  SkeletonSignLinkFunctionCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SkeletonSignLinkFunction}"
+      RetentionInDays: !Ref LogRetention
+
+  ##########################################################################
+  #  SOLUTION INFRASTRUCTURE                                               #
+  ##########################################################################
+  SolutionConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SolutionTextSummaryConnectionsTable
+      AttributeDefinitions:
+        - AttributeName: ExecutionArn
+          AttributeType: S
+        - AttributeName: WsClientId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ExecutionArn
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: WSConnectionIndex
+          KeySchema:
+            - AttributeName: WsClientId
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+
+  SolutionResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SolutionTextSummaryResultsTable
+      AttributeDefinitions:
+        - AttributeName: ExecutionArn
+          AttributeType: S        
+      KeySchema:
+        - AttributeName: ExecutionArn
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  SolutionStateMachineCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /solution-websocket/sfn-text-summarizer
+      RetentionInDays: !Ref LogRetention
+
+  SolutionRestApiAccessCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /solution-websocket/api-gateway-rest-access
+      RetentionInDays: !Ref LogRetention
+
+  SolutionWebsocketApiAccessCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /solution-websocket/api-gateway-websocket-access
+      RetentionInDays: !Ref LogRetention
+
+  SolutionStateMachine:
+    Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
+    Properties:
+      Name: SolutionTextSummarizationStateMachine
+      Type: STANDARD
+      DefinitionUri: statemachine/solution-sfn-template.asl.json
+      DefinitionSubstitutions:
+        SEND_RESULT_FUNCTION_ARN: !GetAtt SolutionSendResultFunction.Arn
+        ENDPOINT_NAME: !GetAtt SolutionSageMakerEndpoint.EndpointName
+        BUCKET_NAME: !Ref SolutionSynthesizeSpeechBucket
+        SIGN_LINK_FUNCTION_ARN: !GetAtt SolutionSignLinkFunction.Arn
+        RESULT_TABLE_NAME: !Ref SolutionResultsTable
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt SolutionStateMachineCloudWatchLogsGroup.Arn
+        IncludeExecutionData: True
+        Level: ALL # ALL | ERROR | FATAL | OFF
+      Tracing:
+        Enabled: true
+      Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
+        - S3CrudPolicy:
+            BucketName: !Ref SolutionSynthesizeSpeechBucket
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SolutionSendResultFunction        
+        - DynamoDBWritePolicy:
+            TableName: !Ref SolutionConnectionsTable
+        - DynamoDBWritePolicy:
+            TableName: !Ref SolutionResultsTable
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: # see https://docs.aws.amazon.com/step-functions/latest/dg/cw-logs.html
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+              Resource: "*"
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - polly:SynthesizeSpeech
+                - polly:StartSpeechSynthesisTask
+                - polly:GetSpeechSynthesisTask
+              Resource: "*"
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - sagemaker:InvokeEndpoint
+              Resource: !Ref SolutionSageMakerEndpoint
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SolutionSignLinkFunction   
+
+  SolutionRestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: live
+      EndpointConfiguration:
+        Type: REGIONAL
+      MethodSettings:
+        - LoggingLevel: INFO
+          ResourcePath: "/*" # allows for logging on any resource
+          HttpMethod: "*" # allows for logging on any method
+      AccessLogSetting:
+        DestinationArn: !GetAtt SolutionRestApiAccessCloudWatchLogsGroup.Arn
+        Format: "$context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] $context.httpMethod $context.resourcePath $context.protocol $context.status $context.responseLength $context.requestId"
+      TracingEnabled: True
+      DefinitionBody:
+        "Fn::Transform":
+          Name: "AWS::Include"
+          Parameters:
+            Location: "api/solution-api.yaml"
+
+  SolutionRestApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: StartAndListSFNExec
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - states:StartExecution
+                  - states:ListExecutions                  
+                Resource: !GetAtt SolutionStateMachine.Arn
+        - PolicyName: DescribeSFNExecution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:DescribeExecution                  
+                Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${SolutionStateMachine.Name}:*"
+        - PolicyName: AllowCWLogging
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                  - logs:GetLogEvents
+                  - logs:FilterLogEvents
+                Resource: "*"
+
+  SolutionWebsocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: SolutionTextSummaryWebsocketApi
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: $request.body.action
+
+  SolutionConnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SolutionWebsocketApi
+      Description: Connect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SolutionOnConnectFunction.Arn}/invocations
+
+  SolutionConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SolutionWebsocketApi
+      RouteKey: OpenConnection
+      AuthorizationType: NONE
+      OperationName: ConnectRoute
+      Target: !Join ["/", [integrations, !Ref SolutionConnectInteg]]
+
+  SolutionWebsocketApiDeployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+      - SolutionConnectRoute
+    Properties:
+      ApiId: !Ref SolutionWebsocketApi
+
+  SolutionWebsocketApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: Prod
+      Description: Prod Stage
+      DeploymentId: !Ref SolutionWebsocketApiDeployment
+      ApiId: !Ref SolutionWebsocketApi
+      AccessLogSettings:
+        DestinationArn: !GetAtt SolutionWebsocketApiAccessCloudWatchLogsGroup.Arn
+        Format: "$context.identity.sourceIp $context.identity.caller $context.identity.user [$context.requestTime] $context.httpMethod $context.resourcePath $context.protocol $context.status $context.responseLength $context.requestId"
+
+  SolutionOnConnectFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: functions/on_connect/
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE_NAME: !Ref SolutionConnectionsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SolutionConnectionsTable
+  
+  SolutionOnConnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SolutionWebsocketApi
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SolutionOnConnectFunction
+      Principal: apigateway.amazonaws.com
+
+  SolutionOnConnectFunctionCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SolutionOnConnectFunction}"
+      RetentionInDays: !Ref LogRetention
+
+  SolutionSendResultFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: functions/send_result/
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE_NAME: !Ref SolutionConnectionsTable
+          RESULTS_TABLE_NAME: !Ref SolutionResultsTable
+          WEBSOCKET_CALLBACK_URL: !Sub "https://${SolutionWebsocketApi}.execute-api.${AWS::Region}.amazonaws.com/${SolutionWebsocketApiStage}"
+          API_REGION: !Ref "AWS::Region"
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SolutionConnectionsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref SolutionResultsTable
+        - Statement:
+            - Sid: AllowPostToConnection
+              Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${SolutionWebsocketApi}/*"
+
+  SolutionSendResultFunctionCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SolutionSendResultFunction}"
+      RetentionInDays: !Ref LogRetention
+
+  SolutionDisconnectFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: functions/on_disconnect/     
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref SolutionConnectionsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SolutionConnectionsTable
+  
+  SolutionDisconnectFunctionPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SolutionWebsocketApi
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SolutionDisconnectFunction
+      Principal: apigateway.amazonaws.com
+
+  SolutionDisconnectFunctionCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SolutionDisconnectFunction}"
+      RetentionInDays: !Ref LogRetention
+
+  SolutionDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SolutionWebsocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target: !Join ["/", [integrations, !Ref SolutionDisconnectInteg]]
+
+  SolutionDisconnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SolutionWebsocketApi
+      Description: Disconnect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SolutionDisconnectFunction.Arn}/invocations
+
+  SolutionSageMakerEndpoint:
+    Type: "AWS::SageMaker::Endpoint"
+    Properties:
+      EndpointConfigName: !GetAtt SolutionEndpointConfig.EndpointConfigName
+
+  SolutionEndpointConfig:
+    Type: "AWS::SageMaker::EndpointConfig"
+    Properties:
+      ProductionVariants:
+        - InitialVariantWeight: 1.0          
+          ModelName: !GetAtt SolutionModel.ModelName
+          VariantName: !GetAtt SolutionModel.ModelName
+          ServerlessConfig:
+            MaxConcurrency: 8
+            MemorySizeInMB: 5120
+  SolutionModel:
+    Type: "AWS::SageMaker::Model"
+    Properties:
+      PrimaryContainer:
+        Image:
+          !Sub "763104351884.dkr.ecr.${AWS::Region}.amazonaws.com/huggingface-pytorch-inference:1.9.1-transformers4.12.3-cpu-py38-ubuntu20.04"
+        Environment:          
+          HF_MODEL_ID: !Ref SummarizationModelID
+          HF_TASK: summarization
+          SAGEMAKER_REGION: !Ref "AWS::Region"
+          SAGEMAKER_CONTAINER_LOG_LEVEL: 20
+      ExecutionRoleArn: !GetAtt SolutionModelExecutionRole.Arn
+
+  SolutionModelExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "sagemaker.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action: "*"
+                Resource: "*"
+
+  SolutionSynthesizeSpeechBucket:
+    Type: AWS::S3::Bucket
+
+  SolutionSignLinkFunction:
+      Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+      Properties:
+        CodeUri: functions/sign_link/      
+        Environment:
+          Variables:            
+            API_REGION: !Ref "AWS::Region"
+        Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
+          - S3ReadPolicy:
+              BucketName: !Ref SolutionSynthesizeSpeechBucket
+
+  SolutionSignLinkFunctionCloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SolutionSignLinkFunction}"
+      RetentionInDays: !Ref LogRetention
+
+##########################################################################
+#   Outputs                                                              #
+##########################################################################
+Outputs:
+  SolutionDatabaseAWSConsoleLink:
+    Description: "AWS Console link to the solution Amazon DynamoDB table"
+    Value: !Sub "https://console.aws.amazon.com/dynamodbv2/home?#table?name=${SolutionConnectionsTable}"
+  SolutionStepFunctionsArn:
+    Description: "Solution Step Functions ARN"
+    Value: !GetAtt SolutionStateMachine.Arn
+  SolutionStepFunctionsAWSConsoleLink:
+    Description: "AWS Console link to the solution Step Functions state machine"
+    Value: !Sub "https://console.aws.amazon.com/states/home?#/statemachines/view/${SolutionStateMachine.Arn}"
+  SolutionRestApiId:
+    Description: "Solution API Gateway id"
+    Value: !Ref SolutionRestApi
+  SolutionRestApiEndpoint:
+    Description: "Solution API Gateway endpoint"
+    Value: !Sub "https://${SolutionRestApi}.execute-api.${AWS::Region}.amazonaws.com/live"
+  SolutionWebsocketEndpoint:
+    Description: "Solution API Gateway endpoint"
+    Value: !Sub "wss://${SolutionWebsocketApi}.execute-api.${AWS::Region}.amazonaws.com/${SolutionWebsocketApiStage}/"
+  SolutionRestApiAWSConsoleLink:
+    Description: "AWS Console link to the solution API Gateway endpoint"
+    Value: !Sub "https://console.aws.amazon.com/apigateway/home?#/apis/${SolutionRestApi}/resources/${SolutionRestApi.RootResourceId}"
+  SolutionStateMachineCloudWatchLogsGroupAWSConsoleLink:
+    Description: "AWS Console link to the solution CloudWatch Log Groups for AWS Step Functions"
+    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fsolution-product-feedback-form-processing$252Fstep-functions"
+  SolutionRestApiAccessCloudWatchLogsGroupAWSConsoleLink:
+    Description: "AWS Console link to the solution CloudWatch Log Groups for Amazon API Gateway access logs"
+    Value: "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/$252Fsolution-product-feedback-form-processing$252Fapi-gateway-access"
+  SolutionRestApiExecutionCloudWatchLogsGroupAWSConsoleLink:
+    Description: "AWS Console link to the solution CloudWatch Log Groups for Amazon API Gateway execution logs"
+    Value: !Sub "https://console.aws.amazon.com/cloudwatch/home?#logsV2:log-groups/log-group/API-Gateway-Execution-Logs_${SolutionRestApi}$252Flive"
+  SolutionSummariseModelEndpointId:
+    Value: !Ref SolutionSageMakerEndpoint
+  SolutionSummariseModelEndpointName:
+    Value: !GetAtt SolutionSageMakerEndpoint.EndpointName
+  SolutionSummariseModelEndpointURL:
+    Value: !Sub "https://runtime.sagemaker.${AWS::Region}.amazonaws.com/endpoints/${SolutionSageMakerEndpoint.EndpointName}/invocations"
+  SolutionSynthesizeSpeechBucketName:
+    Description: "Solution S3 bucket name"
+    Value: !Ref SolutionSynthesizeSpeechBucket
+  SkeletonRestApiEndpoint:
+    Description: "Skeleton API Gateway endpoint"
+    Value: !Sub "https://${SkeletonRestApi}.execute-api.${AWS::Region}.amazonaws.com/live"
+  SkeletonWebsocketEndpoint:
+    Description: "Skeleton API Gateway endpoint"
+    Value: !Sub "wss://${SkeletonWebsocketApi}.execute-api.${AWS::Region}.amazonaws.com/${SkeletonWebsocketApiStage}/"
+  SkeletonSynthesizeSpeechBucketName:
+    Description: "Skeleton S3 bucket name"
+    Value: !Ref SkeletonSynthesizeSpeechBucket
+  SkeletonRestApiId:
+    Description: "Skeleton API Gateway id"
+    Value: !Ref SkeletonRestApi
